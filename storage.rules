@@ -1,0 +1,10 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Same note as firestore.rules — open for a small internal team.
+    // Lock down with request.auth != null once you add login.
+    match /machines/{machineId}/{allPaths=**} {
+      allow read, write: if true;
+    }
+  }
+}

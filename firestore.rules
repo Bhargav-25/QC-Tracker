@@ -1,0 +1,13 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // NOTE: This is an open-access starter rule set so the app works
+    // immediately for a small internal team with no login screen.
+    // Before sharing this outside your own network, add Firebase
+    // Authentication and restrict access to signed-in users, e.g.:
+    //   allow read, write: if request.auth != null;
+    match /machines/{machineId} {
+      allow read, write: if true;
+    }
+  }
+}
