@@ -5,6 +5,7 @@ import {
 } from "firebase/auth";
 import {
   doc,
+  getDoc,
   setDoc,
   updateDoc,
   deleteDoc,
@@ -27,16 +28,15 @@ export function onAuthChange(callback) {
 }
 
 // Each Firebase Auth user gets a matching doc at users/{uid} holding their
-// role. On first login (before an admin has assigned a role), the user
-// creates their own placeholder doc with role: null — an admin then sets
-// the real role from the Manage Users page.
+// role. This only ever WRITES on the very first login, when the doc doesn't
+// exist yet — after that it's read-only from here, so a role an admin
+// assigns is never overwritten by a later login or page refresh.
 export async function ensureUserDoc(user) {
   const ref = doc(db, "users", user.uid);
-  await setDoc(
-    ref,
-    { email: user.email, role: null, createdAt: serverTimestamp() },
-    { merge: true }
-  );
+  const snap = await getDoc(ref);
+  if (!snap.exists()) {
+    await setDoc(ref, { email: user.email, role: null, createdAt: serverTimestamp() });
+  }
 }
 
 export function subscribeToUsers(callback) {
