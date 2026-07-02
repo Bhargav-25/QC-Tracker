@@ -10,6 +10,7 @@ import MachinesList from "./pages/MachinesList.jsx";
 import StandInventory from "./pages/StandInventory.jsx";
 import MaintenanceAdmin from "./pages/MaintenanceAdmin.jsx";
 import ManageUsers from "./pages/ManageUsers.jsx";
+import AuditLog from "./pages/AuditLog.jsx";
 import { subscribeToMachines } from "./utils/machinesApi";
 import { subscribeToStandInventory } from "./utils/inventoryApi";
 import { subscribeToTickets } from "./utils/ticketsApi";
@@ -147,7 +148,7 @@ export default function App() {
           path="/"
           element={
             <Gate role={role} allow={[ROLES.ADMIN, ROLES.DASHBOARD]}>
-              <Dashboard machines={machines} loading={loading} tickets={tickets} role={role} />
+              <Dashboard machines={machines} loading={loading} tickets={tickets} role={role} currentUserEmail={authUser.email} />
             </Gate>
           }
         />
@@ -163,7 +164,7 @@ export default function App() {
           path="/machine/new"
           element={
             <Gate role={role} allow={[ROLES.ADMIN, ROLES.PRODUCTION]}>
-              <AddMachine />
+              <AddMachine currentUserEmail={authUser.email} />
             </Gate>
           }
         />
@@ -185,7 +186,7 @@ export default function App() {
           path="/stand-inventory"
           element={
             <Gate role={role} allow={[ROLES.ADMIN, ROLES.PRODUCTION]}>
-              <StandInventory standCount={standCount} />
+              <StandInventory standCount={standCount} currentUserEmail={authUser.email} />
             </Gate>
           }
         />
@@ -193,7 +194,7 @@ export default function App() {
           path="/maintenance"
           element={
             <Gate role={role} allow={[ROLES.ADMIN]}>
-              <MaintenanceAdmin machines={machines} tickets={tickets} />
+              <MaintenanceAdmin machines={machines} tickets={tickets} currentUserEmail={authUser.email} />
             </Gate>
           }
         />
@@ -210,6 +211,14 @@ export default function App() {
           element={
             <Gate role={role} allow={[ROLES.ADMIN]}>
               <ManageUsers users={allUsers} />
+            </Gate>
+          }
+        />
+        <Route
+          path="/audit-log"
+          element={
+            <Gate role={role} allow={[ROLES.ADMIN]}>
+              <AuditLog />
             </Gate>
           }
         />

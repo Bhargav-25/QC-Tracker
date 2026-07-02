@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { updateMachine } from "../../utils/machinesApi";
+import SectionMeta from "../../components/SectionMeta.jsx";
 
-export default function TemperatureTab({ machine }) {
+export default function TemperatureTab({ machine, currentUserEmail }) {
   const [temp, setTemp] = useState(machine.temperature?.temp || "");
   const [time, setTime] = useState(machine.temperature?.time || "");
   const [saving, setSaving] = useState(false);
@@ -9,7 +10,11 @@ export default function TemperatureTab({ machine }) {
 
   async function handleSave() {
     setSaving(true);
-    await updateMachine(machine.id, { temperature: { temp, time } });
+    await updateMachine(
+      machine.id,
+      { temperature: { temp, time } },
+      { userEmail: currentUserEmail, section: "temperature", machineNumber: machine.machineNumber }
+    );
     setSaving(false);
     setSavedAt(new Date());
   }
@@ -20,6 +25,7 @@ export default function TemperatureTab({ machine }) {
       <div className="section-sub">
         Record the temperature reached and how long it took to get there.
       </div>
+      <SectionMeta meta={machine.sectionMeta?.temperature} />
 
       <div className="field-row">
         <div className="field" style={{ flex: 1 }}>

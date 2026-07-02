@@ -5,10 +5,12 @@ import {
   uploadMachinePhoto,
   deleteMachinePhoto,
 } from "../../utils/machinesApi";
+import SectionMeta from "../../components/SectionMeta.jsx";
 
-export default function FinalPackingTab({ machine }) {
+export default function FinalPackingTab({ machine, currentUserEmail }) {
   const [busyKey, setBusyKey] = useState(null);
   const finalPacking = machine.finalPacking || {};
+  const meta = { userEmail: currentUserEmail, section: "finalPacking", machineNumber: machine.machineNumber };
 
   async function handleUpload(itemKey, file, existing) {
     if (!file) return;
@@ -19,12 +21,11 @@ export default function FinalPackingTab({ machine }) {
         `finalPacking-${itemKey}`,
         file
       );
-      // If replacing, clean up the old file after the new one is safely uploaded.
       if (existing?.path) {
         await deleteMachinePhoto(existing.path);
       }
       const next = { ...finalPacking, [itemKey]: { url, path } };
-      await updateMachine(machine.id, { finalPacking: next });
+      await updateMachine(machine.id, { finalPacking: next }, meta);
     } catch (err) {
       alert("Upload failed: " + err.message);
     }
@@ -38,7 +39,7 @@ export default function FinalPackingTab({ machine }) {
       await deleteMachinePhoto(existing.path);
     }
     const next = { ...finalPacking, [itemKey]: null };
-    await updateMachine(machine.id, { finalPacking: next });
+    await updateMachine(machine.id, { finalPacking: next }, meta);
     setBusyKey(null);
   }
 
@@ -52,6 +53,7 @@ export default function FinalPackingTab({ machine }) {
         photo, this machine's status becomes "Packed". If a photo comes out
         blurry or wrong, use "Replace" to swap it — no need to remove it first.
       </div>
+      <SectionMeta meta={machine.sectionMeta?.finalPacking} />
 
       {FINAL_PACKING_ITEMS.map((item) => {
         const photo = finalPacking[item.key];

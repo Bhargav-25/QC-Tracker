@@ -43,5 +43,14 @@ service cloud.firestore {
       allow read: if isSignedIn();
       allow write: if isAdmin() || isProduction();
     }
+
+    // Append-only audit trail: any signed-in user can add an entry (that's
+    // how every save gets attributed), but only Admin can read the log, and
+    // nobody can edit or delete entries after the fact.
+    match /auditLog/{entryId} {
+      allow read: if isAdmin();
+      allow create: if isSignedIn();
+      allow update, delete: if false;
+    }
   }
 }

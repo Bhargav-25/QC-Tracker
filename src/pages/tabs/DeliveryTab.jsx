@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { updateMachine } from "../../utils/machinesApi";
+import SectionMeta from "../../components/SectionMeta.jsx";
 
-export default function DeliveryTab({ machine }) {
+export default function DeliveryTab({ machine, currentUserEmail }) {
   const canDeliver = machine.dispatch?.dispatched;
   const [delivered, setDelivered] = useState(machine.delivery?.delivered || false);
   const [date, setDate] = useState(machine.delivery?.date || "");
@@ -14,7 +15,11 @@ export default function DeliveryTab({ machine }) {
 
   async function handleSave() {
     setSaving(true);
-    await updateMachine(machine.id, { delivery: { delivered, date } });
+    await updateMachine(
+      machine.id,
+      { delivery: { delivered, date } },
+      { userEmail: currentUserEmail, section: "delivery", machineNumber: machine.machineNumber }
+    );
     setSaving(false);
   }
 
@@ -36,6 +41,7 @@ export default function DeliveryTab({ machine }) {
       <div className="section-sub">
         Mark this machine as delivered once it reaches the customer.
       </div>
+      <SectionMeta meta={machine.sectionMeta?.delivery} />
 
       {!delivered ? (
         <button className="btn btn-primary" onClick={handleMark}>

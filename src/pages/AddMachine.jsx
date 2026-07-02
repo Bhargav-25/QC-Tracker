@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { createMachine } from "../utils/machinesApi";
 
-export default function AddMachine() {
+export default function AddMachine({ currentUserEmail }) {
   const [machineNumber, setMachineNumber] = useState("");
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
@@ -17,7 +17,7 @@ export default function AddMachine() {
     setSaving(true);
     setErrorMsg("");
     try {
-      const id = await createMachine(machineNumber.trim());
+      const id = await createMachine(machineNumber.trim(), currentUserEmail);
       navigate(`/machine/${id}`);
     } catch (err) {
       setErrorMsg("Could not save machine: " + err.message);

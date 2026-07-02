@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { addStandStock } from "../utils/inventoryApi";
 
-export default function StandInventory({ standCount }) {
+export default function StandInventory({ standCount, currentUserEmail }) {
   const [stockInput, setStockInput] = useState("");
   const [stockSaving, setStockSaving] = useState(false);
   const [stockError, setStockError] = useState("");
@@ -13,7 +13,7 @@ export default function StandInventory({ standCount }) {
     setStockSaving(true);
     setStockError("");
     try {
-      await addStandStock(qty);
+      await addStandStock(qty, currentUserEmail);
       setStockInput("");
     } catch (err) {
       setStockError(err.message);

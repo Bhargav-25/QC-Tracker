@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { createTicket } from "../utils/ticketsApi";
 import { TICKET_STATUSES, emptyTicketDraft } from "../constants";
 
-export default function MaintenanceAdmin({ machines, tickets }) {
+export default function MaintenanceAdmin({ machines, tickets, currentUserEmail }) {
   const [statusFilter, setStatusFilter] = useState("All");
   const [showForm, setShowForm] = useState(false);
   const [machineId, setMachineId] = useState("");
@@ -32,7 +32,10 @@ export default function MaintenanceAdmin({ machines, tickets }) {
       return;
     }
     setSaving(true);
-    await createTicket(machineId, draft);
+    await createTicket(machineId, draft, {
+      userEmail: currentUserEmail,
+      machineNumber: machineNumberById[machineId],
+    });
     setDraft(emptyTicketDraft());
     setMachineId("");
     setShowForm(false);

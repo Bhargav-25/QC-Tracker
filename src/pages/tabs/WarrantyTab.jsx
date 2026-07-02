@@ -2,8 +2,9 @@ import { useState } from "react";
 import { updateMachine } from "../../utils/machinesApi";
 import { warrantyEndDate, warrantyDaysRemaining } from "../../utils/status";
 import { DEFAULT_WARRANTY_YEARS } from "../../constants";
+import SectionMeta from "../../components/SectionMeta.jsx";
 
-export default function WarrantyTab({ machine }) {
+export default function WarrantyTab({ machine, currentUserEmail }) {
   const [invoiceNumber, setInvoiceNumber] = useState("");
   const [invoiceDate, setInvoiceDate] = useState("");
   const [months, setMonths] = useState("");
@@ -32,7 +33,11 @@ export default function WarrantyTab({ machine }) {
         addedAt: new Date().toISOString(),
       },
     ];
-    await updateMachine(machine.id, { warranty: { extensions: next } });
+    await updateMachine(
+      machine.id,
+      { warranty: { extensions: next } },
+      { userEmail: currentUserEmail, section: "warranty", machineNumber: machine.machineNumber, action: `added ${months}-month warranty extension (invoice ${invoiceNumber.trim()})` }
+    );
     setInvoiceNumber("");
     setInvoiceDate("");
     setMonths("");
@@ -42,7 +47,11 @@ export default function WarrantyTab({ machine }) {
   async function handleRemoveExtension(index) {
     if (!window.confirm("Remove this warranty extension?")) return;
     const next = extensions.filter((_, i) => i !== index);
-    await updateMachine(machine.id, { warranty: { extensions: next } });
+    await updateMachine(
+      machine.id,
+      { warranty: { extensions: next } },
+      { userEmail: currentUserEmail, section: "warranty", machineNumber: machine.machineNumber, action: "removed a warranty extension" }
+    );
   }
 
   if (!installDate) {
@@ -67,6 +76,7 @@ export default function WarrantyTab({ machine }) {
         Defaults to {DEFAULT_WARRANTY_YEARS} year from the installation date
         ({installDate}), plus any extensions recorded below.
       </div>
+      <SectionMeta meta={machine.sectionMeta?.warranty} />
 
       <div
         className="panel"

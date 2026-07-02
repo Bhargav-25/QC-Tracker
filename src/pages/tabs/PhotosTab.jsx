@@ -5,10 +5,12 @@ import {
   uploadMachinePhoto,
   deleteMachinePhoto,
 } from "../../utils/machinesApi";
+import SectionMeta from "../../components/SectionMeta.jsx";
 
-export default function PhotosTab({ machine }) {
+export default function PhotosTab({ machine, currentUserEmail }) {
   const [busyKey, setBusyKey] = useState(null);
   const photos = machine.photos || {};
+  const meta = { userEmail: currentUserEmail, section: "photos", machineNumber: machine.machineNumber };
 
   async function handleUpload(categoryKey, file) {
     if (!file) return;
@@ -17,7 +19,7 @@ export default function PhotosTab({ machine }) {
       const { url, path } = await uploadMachinePhoto(machine.id, categoryKey, file);
       const current = photos[categoryKey] || [];
       const next = { ...photos, [categoryKey]: [...current, { url, path }] };
-      await updateMachine(machine.id, { photos: next });
+      await updateMachine(machine.id, { photos: next }, meta);
     } catch (err) {
       alert("Upload failed: " + err.message);
     }
@@ -36,7 +38,7 @@ export default function PhotosTab({ machine }) {
       const nextList = photos[categoryKey].map((p, i) =>
         i === index ? { url, path } : p
       );
-      await updateMachine(machine.id, { photos: { ...photos, [categoryKey]: nextList } });
+      await updateMachine(machine.id, { photos: { ...photos, [categoryKey]: nextList } }, meta);
     } catch (err) {
       alert("Replace failed: " + err.message);
     }
@@ -51,7 +53,7 @@ export default function PhotosTab({ machine }) {
       ...photos,
       [categoryKey]: photos[categoryKey].filter((_, i) => i !== index),
     };
-    await updateMachine(machine.id, { photos: next });
+    await updateMachine(machine.id, { photos: next }, meta);
     setBusyKey(null);
   }
 
@@ -62,6 +64,7 @@ export default function PhotosTab({ machine }) {
         Upload the required photos for each testing stage. If a photo isn't
         clear, use "Replace" to swap it without losing the slot.
       </div>
+      <SectionMeta meta={machine.sectionMeta?.photos} />
 
       {PHOTO_CATEGORIES.map((cat) => {
         const list = photos[cat.key] || [];

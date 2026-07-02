@@ -100,18 +100,20 @@ export default function MachineDetail({ machines, standCount, tickets, role, cur
         ))}
       </div>
 
-      {activeTab === "resistance" && <ResistanceTab machine={machine} />}
-      {activeTab === "temperature" && <TemperatureTab machine={machine} />}
-      {activeTab === "photos" && <PhotosTab machine={machine} />}
-      {activeTab === "packing" && <PackingChecklistTab machine={machine} />}
-      {activeTab === "finalPacking" && <FinalPackingTab machine={machine} />}
-      {activeTab === "dispatch" && <DispatchTab machine={machine} standCount={standCount} />}
-      {activeTab === "delivery" && <DeliveryTab machine={machine} />}
+      {activeTab === "resistance" && <ResistanceTab machine={machine} currentUserEmail={currentUserEmail} />}
+      {activeTab === "temperature" && <TemperatureTab machine={machine} currentUserEmail={currentUserEmail} />}
+      {activeTab === "photos" && <PhotosTab machine={machine} currentUserEmail={currentUserEmail} />}
+      {activeTab === "packing" && <PackingChecklistTab machine={machine} currentUserEmail={currentUserEmail} />}
+      {activeTab === "finalPacking" && <FinalPackingTab machine={machine} currentUserEmail={currentUserEmail} />}
+      {activeTab === "dispatch" && <DispatchTab machine={machine} standCount={standCount} currentUserEmail={currentUserEmail} />}
+      {activeTab === "delivery" && <DeliveryTab machine={machine} currentUserEmail={currentUserEmail} />}
       {activeTab === "installation" && (
         <InstallationTab machine={machine} currentUserEmail={currentUserEmail} />
       )}
-      {activeTab === "warranty" && <WarrantyTab machine={machine} />}
-      {activeTab === "maintenance" && <MaintenanceTab machine={machine} tickets={tickets} />}
+      {activeTab === "warranty" && <WarrantyTab machine={machine} currentUserEmail={currentUserEmail} />}
+      {activeTab === "maintenance" && (
+        <MaintenanceTab machine={machine} tickets={tickets} currentUserEmail={currentUserEmail} />
+      )}
     </div>
   );
 }

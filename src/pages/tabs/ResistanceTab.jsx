@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { updateMachine } from "../../utils/machinesApi";
+import SectionMeta from "../../components/SectionMeta.jsx";
 
-export default function ResistanceTab({ machine }) {
+export default function ResistanceTab({ machine, currentUserEmail }) {
   const [rows, setRows] = useState(machine.resistance);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState(null);
@@ -15,7 +16,11 @@ export default function ResistanceTab({ machine }) {
 
   async function handleSave() {
     setSaving(true);
-    await updateMachine(machine.id, { resistance: rows });
+    await updateMachine(
+      machine.id,
+      { resistance: rows },
+      { userEmail: currentUserEmail, section: "resistance", machineNumber: machine.machineNumber }
+    );
     setSaving(false);
     setSavedAt(new Date());
   }
@@ -26,6 +31,7 @@ export default function ResistanceTab({ machine }) {
       <div className="section-sub">
         Enter resistance in kgs for eccentric and concentric mode at each fixed current value.
       </div>
+      <SectionMeta meta={machine.sectionMeta?.resistance} />
 
       <div className="table-scroll">
       <table className="data-table">

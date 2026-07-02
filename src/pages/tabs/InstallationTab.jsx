@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { updateMachine, uploadMachinePhoto, deleteMachinePhoto } from "../../utils/machinesApi";
+import SectionMeta from "../../components/SectionMeta.jsx";
 import { INSTALLATION_PHOTO_COUNT } from "../../constants";
 
 function getCurrentPosition() {
@@ -19,6 +20,7 @@ function getCurrentPosition() {
 export default function InstallationTab({ machine, currentUserEmail }) {
   const canInstall = machine.delivery?.delivered;
   const installation = machine.installation || { photos: [], video: null };
+  const meta = { userEmail: currentUserEmail, section: "installation", machineNumber: machine.machineNumber };
   const [date, setDate] = useState(installation.date || "");
   const [uploadingSlot, setUploadingSlot] = useState(null); // "photo-0", "video", etc.
   const [saving, setSaving] = useState(false);
@@ -51,9 +53,11 @@ export default function InstallationTab({ machine, currentUserEmail }) {
     const photos = [...(installation.photos || [])];
     photos[index] = entry;
     const nextLocation = installation.location || { lat: entry.lat, lng: entry.lng };
-    await updateMachine(machine.id, {
-      installation: { ...installation, photos, location: entry.lat ? nextLocation : installation.location },
-    });
+    await updateMachine(
+      machine.id,
+      { installation: { ...installation, photos, location: entry.lat ? nextLocation : installation.location } },
+      meta
+    );
   }
 
   async function handleRemovePhoto(index) {
@@ -61,7 +65,7 @@ export default function InstallationTab({ machine, currentUserEmail }) {
     if (photo?.path) await deleteMachinePhoto(photo.path);
     const photos = [...installation.photos];
     photos[index] = null;
-    await updateMachine(machine.id, { installation: { ...installation, photos } });
+    await updateMachine(machine.id, { installation: { ...installation, photos } }, meta);
   }
 
   async function handleUploadVideo(file) {
@@ -69,33 +73,39 @@ export default function InstallationTab({ machine, currentUserEmail }) {
     const entry = await captureWithLocation(file, "video");
     if (!entry) return;
     const nextLocation = installation.location || { lat: entry.lat, lng: entry.lng };
-    await updateMachine(machine.id, {
-      installation: { ...installation, video: entry, location: entry.lat ? nextLocation : installation.location },
-    });
+    await updateMachine(
+      machine.id,
+      { installation: { ...installation, video: entry, location: entry.lat ? nextLocation : installation.location } },
+      meta
+    );
   }
 
   async function handleRemoveVideo() {
     if (installation.video?.path) await deleteMachinePhoto(installation.video.path);
-    await updateMachine(machine.id, { installation: { ...installation, video: null } });
+    await updateMachine(machine.id, { installation: { ...installation, video: null } }, meta);
   }
 
   async function handleMarkInstalled() {
     setSaving(true);
     const finalDate = date || new Date().toISOString().slice(0, 10);
     setDate(finalDate);
-    await updateMachine(machine.id, {
-      installation: {
-        ...installation,
-        installed: true,
-        date: finalDate,
-        installedBy: currentUserEmail || installation.installedBy || "",
+    await updateMachine(
+      machine.id,
+      {
+        installation: {
+          ...installation,
+          installed: true,
+          date: finalDate,
+          installedBy: currentUserEmail || installation.installedBy || "",
+        },
       },
-    });
+      meta
+    );
     setSaving(false);
   }
 
   async function handleUndo() {
-    await updateMachine(machine.id, { installation: { ...installation, installed: false } });
+    await updateMachine(machine.id, { installation: { ...installation, installed: false } }, meta);
   }
 
   if (!canInstall) {
@@ -121,6 +131,7 @@ export default function InstallationTab({ machine, currentUserEmail }) {
         each one automatically records the location it was taken at. This
         date starts the warranty countdown.
       </div>
+      <SectionMeta meta={machine.sectionMeta?.installation} />
 
       {installation.installedBy && (
         <div className="helper-text" style={{ marginBottom: 14 }}>

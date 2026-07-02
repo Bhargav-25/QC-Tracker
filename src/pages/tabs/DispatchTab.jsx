@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { updateMachine } from "../../utils/machinesApi";
 import { decrementStandForDispatch, returnStandToInventory } from "../../utils/inventoryApi";
+import SectionMeta from "../../components/SectionMeta.jsx";
 
-export default function DispatchTab({ machine, standCount }) {
+export default function DispatchTab({ machine, standCount, currentUserEmail }) {
   const [dispatched, setDispatched] = useState(machine.dispatch?.dispatched || false);
   const [date, setDate] = useState(machine.dispatch?.date || "");
   const [comment, setComment] = useState(machine.dispatch?.comment || "");
@@ -26,18 +27,20 @@ export default function DispatchTab({ machine, standCount }) {
 
     const wasDispatchedWithStand = machine.dispatch?.dispatched && machine.dispatch?.includeStand;
     const nowDispatchedWithStand = dispatched && includeStand;
+    const standMeta = { userEmail: currentUserEmail, machineId: machine.id, machineNumber: machine.machineNumber };
 
     try {
-      // Only touch inventory when the "include stand" state actually changes.
       if (nowDispatchedWithStand && !wasDispatchedWithStand) {
-        await decrementStandForDispatch();
+        await decrementStandForDispatch(standMeta);
       } else if (!nowDispatchedWithStand && wasDispatchedWithStand) {
-        await returnStandToInventory();
+        await returnStandToInventory(standMeta);
       }
 
-      await updateMachine(machine.id, {
-        dispatch: { dispatched, date, comment, includeStand },
-      });
+      await updateMachine(
+        machine.id,
+        { dispatch: { dispatched, date, comment, includeStand } },
+        { userEmail: currentUserEmail, section: "dispatch", machineNumber: machine.machineNumber }
+      );
     } catch (err) {
       setErrorMsg(err.message);
       setSaving(false);
@@ -55,6 +58,7 @@ export default function DispatchTab({ machine, standCount }) {
       <div className="section-sub">
         Mark this machine as dispatched once it has left the facility.
       </div>
+      <SectionMeta meta={machine.sectionMeta?.dispatch} />
 
       {!dispatched ? (
         <button className="btn btn-primary" onClick={handleMarkDispatched}>
@@ -106,7 +110,7 @@ export default function DispatchTab({ machine, standCount }) {
       </div>
       {!includeStand && standCount <= 0 && dispatched && !alreadyDispatchedWithStand && (
         <div className="helper-text" style={{ color: "var(--rust)", marginTop: -10, marginBottom: 16 }}>
-          No machine stands left in inventory — add stock from the dashboard before including one.
+          No machine stands left in inventory — add stock from the Stand Inventory page before including one.
         </div>
       )}
 

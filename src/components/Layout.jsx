@@ -11,6 +11,7 @@ const NAV_BY_ROLE = {
     { to: "/maintenance", label: "Maintenance" },
     { to: "/notifications", label: "Notifications", showBadge: true },
     { to: "/manage-users", label: "Manage Users" },
+    { to: "/audit-log", label: "Audit Log" },
   ],
   [ROLES.PRODUCTION]: [
     { to: "/machines", label: "Machines", end: true },

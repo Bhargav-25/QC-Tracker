@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { PACKING_CHECKLIST_ITEMS } from "../../constants";
 import { updateMachine } from "../../utils/machinesApi";
+import SectionMeta from "../../components/SectionMeta.jsx";
 
-export default function PackingChecklistTab({ machine }) {
+export default function PackingChecklistTab({ machine, currentUserEmail }) {
   const [checklist, setChecklist] = useState(machine.packingChecklist);
   const [saving, setSaving] = useState(false);
   const sentBack = machine.packingSentBack || {};
@@ -13,7 +14,11 @@ export default function PackingChecklistTab({ machine }) {
 
   async function handleSave() {
     setSaving(true);
-    await updateMachine(machine.id, { packingChecklist: checklist });
+    await updateMachine(
+      machine.id,
+      { packingChecklist: checklist },
+      { userEmail: currentUserEmail, section: "packing", machineNumber: machine.machineNumber }
+    );
     setSaving(false);
   }
 
@@ -29,6 +34,7 @@ export default function PackingChecklistTab({ machine }) {
         left unmarked when saved will show up in Notifications so it can be sent
         separately.
       </div>
+      <SectionMeta meta={machine.sectionMeta?.packing} />
 
       <div className="checklist">
         {PACKING_CHECKLIST_ITEMS.map((item) => (

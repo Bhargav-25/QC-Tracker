@@ -3,7 +3,7 @@ import { createTicket, updateTicket } from "../../utils/ticketsApi";
 import { uploadMachinePhoto, deleteMachinePhoto } from "../../utils/machinesApi";
 import { TICKET_STATUSES, emptyTicketDraft } from "../../constants";
 
-function TicketCard({ ticket, machineId }) {
+function TicketCard({ ticket, machineId, machineNumber, currentUserEmail }) {
   const [expanded, setExpanded] = useState(ticket.status !== "Closed");
   const [status, setStatus] = useState(ticket.status);
   const [scheduledResolutionDate, setScheduledResolutionDate] = useState(
@@ -36,7 +36,11 @@ function TicketCard({ ticket, machineId }) {
 
   async function handleSave() {
     setSaving(true);
-    await updateTicket(ticket.id, { status, scheduledResolutionDate, solution, photo });
+    await updateTicket(
+      ticket.id,
+      { status, scheduledResolutionDate, solution, photo },
+      { userEmail: currentUserEmail, machineId, machineNumber }
+    );
     setSaving(false);
     if (status === "Closed") setExpanded(false);
   }
@@ -53,7 +57,12 @@ function TicketCard({ ticket, machineId }) {
           </span>
           <div>
             <div style={{ fontWeight: 600, fontSize: expanded ? 15 : 13.5 }}>{ticket.issueName}</div>
-            {expanded && <div className="helper-text">Reported {ticket.date}</div>}
+            {expanded && (
+              <div className="helper-text">
+                Reported {ticket.date}{ticket.createdBy ? ` by ${ticket.createdBy}` : ""}
+                {ticket.updatedBy && ticket.updatedBy !== ticket.createdBy ? ` · last updated by ${ticket.updatedBy}` : ""}
+              </div>
+            )}
           </div>
         </div>
         <span
@@ -147,7 +156,7 @@ function TicketCard({ ticket, machineId }) {
   );
 }
 
-export default function MaintenanceTab({ machine, tickets }) {
+export default function MaintenanceTab({ machine, tickets, currentUserEmail }) {
   const [draft, setDraft] = useState(emptyTicketDraft());
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
@@ -169,7 +178,7 @@ export default function MaintenanceTab({ machine, tickets }) {
       return;
     }
     setSaving(true);
-    await createTicket(machine.id, draft);
+    await createTicket(machine.id, draft, { userEmail: currentUserEmail, machineNumber: machine.machineNumber });
     setDraft(emptyTicketDraft());
     setSaving(false);
   }
@@ -229,7 +238,7 @@ export default function MaintenanceTab({ machine, tickets }) {
       {machineTickets.length === 0 ? (
         <div className="empty-state">No maintenance tickets for this machine yet.</div>
       ) : (
-        machineTickets.map((t) => <TicketCard key={t.id} ticket={t} machineId={machine.id} />)
+        machineTickets.map((t) => <TicketCard key={t.id} ticket={t} machineId={machine.id} machineNumber={machine.machineNumber} currentUserEmail={currentUserEmail} />)
       )}
     </div>
   );

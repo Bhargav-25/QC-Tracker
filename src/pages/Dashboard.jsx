@@ -11,7 +11,7 @@ import {
 import { STATUS, ROLES } from "../constants";
 import { deleteMachine } from "../utils/machinesApi";
 
-export default function Dashboard({ machines, loading, tickets, role }) {
+export default function Dashboard({ machines, loading, tickets, role, currentUserEmail }) {
   const [filter, setFilter] = useState("All");
   const isDashboardOnly = role === ROLES.DASHBOARD;
 
@@ -40,7 +40,7 @@ export default function Dashboard({ machines, loading, tickets, role }) {
 
   async function handleDelete(id, machineNumber) {
     if (window.confirm(`Delete machine ${machineNumber}? This cannot be undone.`)) {
-      await deleteMachine(id);
+      await deleteMachine(id, { userEmail: currentUserEmail, machineNumber });
     }
   }
 
