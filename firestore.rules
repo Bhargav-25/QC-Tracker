@@ -9,5 +9,11 @@ service cloud.firestore {
     match /machines/{machineId} {
       allow read, write: if true;
     }
+    match /tickets/{ticketId} {
+      allow read, write: if true;
+    }
+    match /inventory/{docId} {
+      allow read, write: if true;
+    }
   }
 }

@@ -1,11 +1,14 @@
-import { STATUS } from "../constants";
+import { STATUS, DEFAULT_WARRANTY_YEARS, WARRANTY_EXPIRY_WARNING_DAYS } from "../constants";
 
 // Derives the current lifecycle status of a machine from its data.
 // This is computed, not stored, so it can never drift out of sync —
-// except for "Dispatched", which is a manual, one-way action.
+// except for the manual lifecycle actions (Dispatched / Delivered /
+// Installed), which are deliberate one-way steps rather than computed state.
 export function computeStatus(machine) {
   if (!machine) return STATUS.ASSEMBLY;
 
+  if (machine.installation?.installed) return STATUS.INSTALLED;
+  if (machine.delivery?.delivered) return STATUS.DELIVERED;
   if (machine.dispatch?.dispatched) return STATUS.DISPATCHED;
 
   const fp = machine.finalPacking || {};
@@ -45,4 +48,48 @@ export function missingPackingItems(machine) {
   return Object.keys(checklist).filter(
     (key) => !checklist[key] && !sentBack[key]
   );
+}
+
+// --- Warranty -------------------------------------------------------------
+
+// Warranty starts on the installation date, runs 1 year by default, and can
+// be pushed out further by any number of recorded extensions (each in whole
+// months, tied to an invoice).
+export function warrantyEndDate(machine) {
+  const installDate = machine.installation?.date;
+  if (!installDate) return null;
+
+  const end = new Date(installDate + "T00:00:00");
+  end.setFullYear(end.getFullYear() + DEFAULT_WARRANTY_YEARS);
+
+  const extensions = machine.warranty?.extensions || [];
+  extensions.forEach((ext) => {
+    end.setMonth(end.getMonth() + Number(ext.months || 0));
+  });
+
+  return end;
+}
+
+export function warrantyDaysRemaining(machine) {
+  const end = warrantyEndDate(machine);
+  if (!end) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const msPerDay = 24 * 60 * 60 * 1000;
+  return Math.ceil((end.getTime() - today.getTime()) / msPerDay);
+}
+
+export function isWarrantyExpiringSoon(machine) {
+  const days = warrantyDaysRemaining(machine);
+  if (days === null) return false;
+  return days <= WARRANTY_EXPIRY_WARNING_DAYS;
+}
+
+// --- Date helpers -----------------------------------------------------------
+
+export function isInCurrentMonth(dateStr) {
+  if (!dateStr) return false;
+  const d = new Date(dateStr + "T00:00:00");
+  const now = new Date();
+  return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
 }

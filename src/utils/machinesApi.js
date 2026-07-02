@@ -22,6 +22,10 @@ import {
   emptyPackingChecklist,
   emptyPackingSentBack,
   emptyFinalPacking,
+  emptyDispatch,
+  emptyDelivery,
+  emptyInstallation,
+  emptyWarranty,
 } from "../constants";
 
 const machinesCol = collection(db, "machines");
@@ -45,7 +49,10 @@ export async function createMachine(machineNumber) {
     packingChecklist: emptyPackingChecklist(),
     packingSentBack: emptyPackingSentBack(),
     finalPacking: emptyFinalPacking(),
-    dispatch: { dispatched: false, date: "", comment: "" },
+    dispatch: emptyDispatch(),
+    delivery: emptyDelivery(),
+    installation: emptyInstallation(),
+    warranty: emptyWarranty(),
   });
   return docRef.id;
 }

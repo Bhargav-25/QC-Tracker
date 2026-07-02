@@ -27,6 +27,7 @@ export default function ResistanceTab({ machine }) {
         Enter resistance in kgs for eccentric and concentric mode at each fixed current value.
       </div>
 
+      <div className="table-scroll">
       <table className="data-table">
         <thead>
           <tr>
@@ -61,6 +62,7 @@ export default function ResistanceTab({ machine }) {
           ))}
         </tbody>
       </table>
+      </div>
 
       <div style={{ marginTop: 18, display: "flex", alignItems: "center", gap: 12 }}>
         <button className="btn btn-primary" onClick={handleSave} disabled={saving}>

@@ -255,7 +255,7 @@ h4 {
 
 .stat-row {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 14px;
   margin-bottom: 28px;
 }
@@ -332,11 +332,23 @@ h4 {
 .status-tag.dispatched {
   color: #6a8cd0;
 }
+.status-tag.delivered {
+  color: #9b7fd4;
+}
+.status-tag.installed {
+  color: #4fbf6a;
+}
 
 /* ---------- Machine table (dashboard) ---------- */
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
 .machine-table {
   width: 100%;
   border-collapse: collapse;
+  min-width: 640px;
 }
 
 .machine-table th {
@@ -372,6 +384,7 @@ h4 {
   width: 100%;
   border-collapse: collapse;
   margin-top: 8px;
+  min-width: 420px;
 }
 
 .data-table th {
@@ -606,4 +619,150 @@ h4 {
 .link {
   color: var(--amber);
   text-decoration: underline;
+}
+
+/* ============================================================
+   Mobile layout — this app is mostly used on phones, so the
+   sidebar collapses to a horizontal top bar, tables scroll
+   sideways instead of squeezing, tabs scroll instead of wrap,
+   and forms stack to full width.
+   ============================================================ */
+@media (max-width: 820px) {
+  .app-shell {
+    flex-direction: column;
+  }
+
+  .sidebar {
+    width: 100%;
+    height: auto;
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    flex-direction: row;
+    align-items: center;
+    padding: 10px 12px;
+    overflow-x: auto;
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .sidebar-brand {
+    padding: 0 14px 0 0;
+    margin-bottom: 0;
+    margin-right: 8px;
+    border-bottom: none;
+    border-right: 1px solid var(--line);
+    flex-shrink: 0;
+  }
+
+  .sidebar-brand .sub {
+    display: none;
+  }
+
+  .sidebar nav {
+    display: flex;
+    gap: 2px;
+  }
+
+  .nav-link {
+    padding: 8px 12px;
+    border-left: none;
+    border-bottom: 3px solid transparent;
+    white-space: nowrap;
+    font-size: 12.5px;
+  }
+
+  .nav-link.active {
+    border-left-color: transparent;
+    border-bottom-color: var(--amber);
+  }
+
+  .main-area {
+    padding: 18px 14px 50px;
+    max-width: 100%;
+  }
+
+  .page-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .page-header h1 {
+    font-size: 21px;
+  }
+
+  .stat-row {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+
+  .stat-card {
+    padding: 14px 14px;
+  }
+
+  .stat-card .num {
+    font-size: 26px;
+  }
+
+  .panel {
+    padding: 16px;
+  }
+
+  .tab-bar {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .tab-btn {
+    padding: 10px 12px;
+    font-size: 11px;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .field-row {
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .photo-grid {
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  }
+
+  .notif-item {
+    flex-wrap: wrap;
+  }
+
+  .notif-item .actions {
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .notif-item .actions .btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .checklist-item {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .data-table input {
+    width: 84px;
+  }
+
+  /* Buttons and inputs get a little taller for easier tapping */
+  .btn {
+    padding: 10px 16px;
+  }
+
+  input,
+  select,
+  textarea {
+    padding: 10px;
+    font-size: 15px;
+  }
 }

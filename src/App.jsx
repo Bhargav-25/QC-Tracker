@@ -6,12 +6,16 @@ import AddMachine from "./pages/AddMachine.jsx";
 import MachineDetail from "./pages/MachineDetail.jsx";
 import Notifications from "./pages/Notifications.jsx";
 import { subscribeToMachines } from "./utils/machinesApi";
-import { missingPackingItems } from "./utils/status";
+import { subscribeToStandInventory } from "./utils/inventoryApi";
+import { subscribeToTickets } from "./utils/ticketsApi";
+import { missingPackingItems, isWarrantyExpiringSoon } from "./utils/status";
 
 export default function App() {
   const [machines, setMachines] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [standCount, setStandCount] = useState(0);
+  const [tickets, setTickets] = useState([]);
 
   useEffect(() => {
     const unsub = subscribeToMachines(
@@ -27,10 +31,24 @@ export default function App() {
     return unsub;
   }, []);
 
-  const missingCount = machines.reduce(
+  useEffect(() => {
+    const unsub = subscribeToStandInventory(setStandCount);
+    return unsub;
+  }, []);
+
+  useEffect(() => {
+    const unsub = subscribeToTickets(setTickets);
+    return unsub;
+  }, []);
+
+  const missingPackingCount = machines.reduce(
     (sum, m) => sum + missingPackingItems(m).length,
     0
   );
+  const warrantyExpiringCount = machines.filter((m) =>
+    isWarrantyExpiringSoon(m)
+  ).length;
+  const notificationCount = missingPackingCount + warrantyExpiringCount;
 
   if (error) {
     return (
@@ -43,12 +61,34 @@ export default function App() {
   }
 
   return (
-    <Layout missingCount={missingCount}>
+    <Layout missingCount={notificationCount}>
       <Routes>
-        <Route path="/" element={<Dashboard machines={machines} loading={loading} />} />
+        <Route
+          path="/"
+          element={
+            <Dashboard
+              machines={machines}
+              loading={loading}
+              standCount={standCount}
+              tickets={tickets}
+            />
+          }
+        />
         <Route path="/machine/new" element={<AddMachine />} />
-        <Route path="/machine/:id" element={<MachineDetail machines={machines} />} />
-        <Route path="/notifications" element={<Notifications machines={machines} />} />
+        <Route
+          path="/machine/:id"
+          element={
+            <MachineDetail
+              machines={machines}
+              standCount={standCount}
+              tickets={tickets}
+            />
+          }
+        />
+        <Route
+          path="/notifications"
+          element={<Notifications machines={machines} />}
+        />
       </Routes>
     </Layout>
   );

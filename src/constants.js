@@ -64,6 +64,8 @@ export const STATUS = {
   TESTING: "Testing",
   PACKED: "Packed",
   DISPATCHED: "Dispatched",
+  DELIVERED: "Delivered",
+  INSTALLED: "Installed",
 };
 
 export const STATUS_ORDER = [
@@ -71,4 +73,31 @@ export const STATUS_ORDER = [
   STATUS.TESTING,
   STATUS.PACKED,
   STATUS.DISPATCHED,
+  STATUS.DELIVERED,
+  STATUS.INSTALLED,
 ];
+
+// Warranty defaults to 1 year from the installation date, then can be
+// extended in whole months with an invoice reference each time.
+export const DEFAULT_WARRANTY_YEARS = 1;
+export const WARRANTY_EXPIRY_WARNING_DAYS = 10;
+
+export const emptyWarranty = () => ({ extensions: [] });
+
+export const emptyDispatch = () => ({
+  dispatched: false,
+  date: "",
+  comment: "",
+  includeStand: false,
+});
+
+export const emptyDelivery = () => ({ delivered: false, date: "" });
+export const emptyInstallation = () => ({ installed: false, date: "" });
+
+export const TICKET_STATUSES = ["Open", "In Progress", "Closed"];
+
+export const emptyTicketDraft = () => ({
+  issueName: "",
+  description: "",
+  date: new Date().toISOString().slice(0, 10),
+});
