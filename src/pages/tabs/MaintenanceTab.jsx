@@ -4,6 +4,7 @@ import { uploadMachinePhoto, deleteMachinePhoto } from "../../utils/machinesApi"
 import { TICKET_STATUSES, emptyTicketDraft } from "../../constants";
 
 function TicketCard({ ticket, machineId }) {
+  const [expanded, setExpanded] = useState(ticket.status !== "Closed");
   const [status, setStatus] = useState(ticket.status);
   const [scheduledResolutionDate, setScheduledResolutionDate] = useState(
     ticket.scheduledResolutionDate || ""
@@ -37,14 +38,23 @@ function TicketCard({ ticket, machineId }) {
     setSaving(true);
     await updateTicket(ticket.id, { status, scheduledResolutionDate, solution, photo });
     setSaving(false);
+    if (status === "Closed") setExpanded(false);
   }
 
   return (
-    <div className="panel" style={{ marginBottom: 14 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-        <div>
-          <div style={{ fontWeight: 600, fontSize: 15 }}>{ticket.issueName}</div>
-          <div className="helper-text">Reported {ticket.date}</div>
+    <div className="panel" style={{ marginBottom: 10, padding: expanded ? 22 : 14 }}>
+      <div
+        style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", cursor: "pointer" }}
+        onClick={() => setExpanded((e) => !e)}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ color: "var(--paper-dim)", fontSize: 12, width: 12, display: "inline-block" }}>
+            {expanded ? "▾" : "▸"}
+          </span>
+          <div>
+            <div style={{ fontWeight: 600, fontSize: expanded ? 15 : 13.5 }}>{ticket.issueName}</div>
+            {expanded && <div className="helper-text">Reported {ticket.date}</div>}
+          </div>
         </div>
         <span
           className={
@@ -52,77 +62,87 @@ function TicketCard({ ticket, machineId }) {
             (ticket.status === "Closed" ? "packed" : ticket.status === "In Progress" ? "testing" : "assembly")
           }
         >
-          {status}
+          {ticket.status}
         </span>
       </div>
 
-      {ticket.description && (
-        <p style={{ marginTop: 12, marginBottom: 12, fontSize: 13.5, color: "var(--paper-dim)" }}>
-          {ticket.description}
-        </p>
+      {!expanded && ticket.status === "Closed" && ticket.solution && (
+        <div className="helper-text" style={{ marginTop: 8, paddingLeft: 22 }}>
+          Resolved: {ticket.solution.length > 90 ? ticket.solution.slice(0, 90) + "…" : ticket.solution}
+        </div>
       )}
 
-      <div className="field-row">
-        <div className="field" style={{ flex: 1, minWidth: 160 }}>
-          <label>Status</label>
-          <select value={status} onChange={(e) => setStatus(e.target.value)}>
-            {TICKET_STATUSES.map((s) => (
-              <option key={s} value={s}>{s}</option>
-            ))}
-          </select>
-        </div>
-        <div className="field" style={{ flex: 1, minWidth: 160 }}>
-          <label>Scheduled resolution date</label>
-          <input
-            type="date"
-            value={scheduledResolutionDate}
-            onChange={(e) => setScheduledResolutionDate(e.target.value)}
-          />
-        </div>
-      </div>
+      {expanded && (
+        <div style={{ marginTop: 14 }}>
+          {ticket.description && (
+            <p style={{ marginTop: 0, marginBottom: 12, fontSize: 13.5, color: "var(--paper-dim)" }}>
+              {ticket.description}
+            </p>
+          )}
 
-      {isClosing && (
-        <>
-          <div className="field">
-            <label>Solution provided</label>
-            <textarea
-              rows={2}
-              style={{ width: "100%", fontFamily: "var(--font-body)" }}
-              value={solution}
-              onChange={(e) => setSolution(e.target.value)}
-              placeholder="What fixed it…"
-            />
-          </div>
-          <div className="field">
-            <label>Photo (optional)</label>
-            <div className="photo-grid" style={{ maxWidth: 150 }}>
-              {photo ? (
-                <div className="photo-slot">
-                  <img src={photo.url} alt="Resolution" />
-                  <button className="remove-btn" onClick={handleRemovePhoto}>Remove</button>
-                </div>
-              ) : (
-                <div className="photo-slot">
-                  <label>
-                    {uploading ? "Uploading…" : "+ Add photo"}
-                    <input
-                      type="file"
-                      accept="image/*"
-                      capture="environment"
-                      disabled={uploading}
-                      onChange={(e) => handlePhotoUpload(e.target.files[0])}
-                    />
-                  </label>
-                </div>
-              )}
+          <div className="field-row">
+            <div className="field" style={{ flex: 1, minWidth: 160 }}>
+              <label>Status</label>
+              <select value={status} onChange={(e) => setStatus(e.target.value)}>
+                {TICKET_STATUSES.map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+            </div>
+            <div className="field" style={{ flex: 1, minWidth: 160 }}>
+              <label>Scheduled resolution date</label>
+              <input
+                type="date"
+                value={scheduledResolutionDate}
+                onChange={(e) => setScheduledResolutionDate(e.target.value)}
+              />
             </div>
           </div>
-        </>
-      )}
 
-      <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
-        {saving ? "Saving…" : "Save"}
-      </button>
+          {isClosing && (
+            <>
+              <div className="field">
+                <label>Solution provided</label>
+                <textarea
+                  rows={2}
+                  style={{ width: "100%", fontFamily: "var(--font-body)" }}
+                  value={solution}
+                  onChange={(e) => setSolution(e.target.value)}
+                  placeholder="What fixed it…"
+                />
+              </div>
+              <div className="field">
+                <label>Photo (optional)</label>
+                <div className="photo-grid" style={{ maxWidth: 150 }}>
+                  {photo ? (
+                    <div className="photo-slot">
+                      <img src={photo.url} alt="Resolution" />
+                      <button className="remove-btn" onClick={handleRemovePhoto}>Remove</button>
+                    </div>
+                  ) : (
+                    <div className="photo-slot">
+                      <label>
+                        {uploading ? "Uploading…" : "+ Add photo"}
+                        <input
+                          type="file"
+                          accept="image/*"
+                          capture="environment"
+                          disabled={uploading}
+                          onChange={(e) => handlePhotoUpload(e.target.files[0])}
+                        />
+                      </label>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
+
+          <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
+            {saving ? "Saving…" : "Save"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

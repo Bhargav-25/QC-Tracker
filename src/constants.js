@@ -95,10 +95,13 @@ export const emptyDelivery = () => ({ delivered: false, date: "" });
 export const emptyInstallation = () => ({
   installed: false,
   date: "",
-  photos: [], // { url, path, lat, lng, capturedAt }
+  photos: [], // up to 4: { url, path, lat, lng, capturedAt }
+  video: null, // 1: { url, path, lat, lng, capturedAt }
   installedBy: "", // email of the technician who completed it
-  location: null, // { lat, lng } — set from the first photo with coordinates
+  location: null, // { lat, lng } — set from the first upload with coordinates
 });
+
+export const INSTALLATION_PHOTO_COUNT = 4;
 
 export const TICKET_STATUSES = ["Open", "In Progress", "Closed"];
 
