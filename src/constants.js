@@ -92,7 +92,13 @@ export const emptyDispatch = () => ({
 });
 
 export const emptyDelivery = () => ({ delivered: false, date: "" });
-export const emptyInstallation = () => ({ installed: false, date: "" });
+export const emptyInstallation = () => ({
+  installed: false,
+  date: "",
+  photos: [], // { url, path, lat, lng, capturedAt }
+  installedBy: "", // email of the technician who completed it
+  location: null, // { lat, lng } — set from the first photo with coordinates
+});
 
 export const TICKET_STATUSES = ["Open", "In Progress", "Closed"];
 
@@ -101,3 +107,14 @@ export const emptyTicketDraft = () => ({
   description: "",
   date: new Date().toISOString().slice(0, 10),
 });
+
+// --- Access control ---------------------------------------------------------
+
+export const ROLES = {
+  ADMIN: "Admin",
+  PRODUCTION: "Production",
+  INSTALLATION: "Installation",
+  DASHBOARD: "Dashboard",
+};
+
+export const ALL_ROLES = [ROLES.ADMIN, ROLES.PRODUCTION, ROLES.INSTALLATION, ROLES.DASHBOARD];

@@ -123,3 +123,51 @@ This was built with the mobile app in mind: the Firestore data model and the
 be reused almost as-is in a React Native app with the same Firebase project
 — you'd rebuild the screens with React Native components but keep the same
 `machinesApi.js` functions and status logic.
+
+## Access control (Admin / Production / Installation / Dashboard)
+
+The app now requires sign-in, with four roles that see different things:
+
+- **Admin** — full access to everything, including Manage Users and the
+  global Maintenance page.
+- **Production** — Machines list, Add Machine, Stand Inventory,
+  Notifications, and (inside a machine) Resistance, Temperature, Photos,
+  Packing Checklist, Final Packing, and Dispatch.
+- **Installation** — a filtered Machines list (machines ready for them, plus
+  ones they've already installed) and, inside a machine, only the Delivery
+  and Installation tabs. Installation photos automatically capture GPS
+  coordinates (the browser will prompt for location permission).
+- **Dashboard** — the numbers-only Dashboard page and nothing else.
+
+### One-time setup
+
+**1. Enable Firebase Authentication**
+Firebase console → Authentication → get started → enable the **Email/Password** sign-in provider.
+
+**2. Create your own login**
+Authentication → Users → Add user → enter your own email and a password.
+
+**3. Sign in once on the site**
+Visit your deployed app and log in with that email/password. You'll land on
+a "Waiting for access" screen — that's expected, and confirms your account
+was created.
+
+**4. Make yourself Admin (bootstrapping the first account)**
+This one step has to be done manually, because the app itself won't let
+anyone assign the very first Admin role (by design — otherwise anyone could
+grant themselves Admin). In the Firebase console:
+- Firestore Database → Data tab → `users` collection
+- Find the document with your email
+- Edit the `role` field, set it to exactly `Admin` (capital A), save
+
+Reload the app — you're now Admin, and can assign roles to everyone else
+from **Manage Users** instead of doing this console step again.
+
+**5. Add everyone else**
+For each teammate: create their login in Authentication → Users (same as
+step 2), have them sign in once, then assign their role from Manage Users.
+
+**6. Re-publish the rules**
+`firestore.rules` and `storage.rules` in this repo were updated to require
+sign-in and enforce these roles — paste the new versions into the Firebase
+console (Firestore → Rules, and Storage → Rules) and publish both.

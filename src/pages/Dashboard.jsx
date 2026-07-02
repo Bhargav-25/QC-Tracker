@@ -1,15 +1,19 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import StatusTag from "../components/StatusTag.jsx";
-import { computeStatus, isInCurrentMonth, warrantyDaysRemaining } from "../utils/status";
-import { STATUS } from "../constants";
+import {
+  computeStatus,
+  isInCurrentMonth,
+  warrantyDaysRemaining,
+  missingPackingItems,
+  isWarrantyExpiringSoon,
+} from "../utils/status";
+import { STATUS, ROLES } from "../constants";
 import { deleteMachine } from "../utils/machinesApi";
-import { addStandStock } from "../utils/inventoryApi";
 
-export default function Dashboard({ machines, loading, standCount, tickets }) {
+export default function Dashboard({ machines, loading, tickets, role }) {
   const [filter, setFilter] = useState("All");
-  const [stockInput, setStockInput] = useState("");
-  const [stockSaving, setStockSaving] = useState(false);
+  const isDashboardOnly = role === ROLES.DASHBOARD;
 
   const withStatus = machines.map((m) => ({ ...m, _status: computeStatus(m) }));
 
@@ -28,6 +32,9 @@ export default function Dashboard({ machines, loading, standCount, tickets }) {
   const dispatchedThisMonth = machines.filter((m) => isInCurrentMonth(m.dispatch?.date)).length;
   const maintenanceThisMonth = tickets.filter((t) => isInCurrentMonth(t.date)).length;
 
+  const missingPackingCount = machines.reduce((sum, m) => sum + missingPackingItems(m).length, 0);
+  const warrantyExpiringCount = machines.filter((m) => isWarrantyExpiringSoon(m)).length;
+
   const visible =
     filter === "All" ? withStatus : withStatus.filter((m) => m._status === filter);
 
@@ -37,16 +44,6 @@ export default function Dashboard({ machines, loading, standCount, tickets }) {
     }
   }
 
-  async function handleAddStock(e) {
-    e.preventDefault();
-    const qty = Number(stockInput);
-    if (!qty || qty <= 0) return;
-    setStockSaving(true);
-    await addStandStock(qty);
-    setStockInput("");
-    setStockSaving(false);
-  }
-
   return (
     <div>
       <div className="page-header">
@@ -54,9 +51,11 @@ export default function Dashboard({ machines, loading, standCount, tickets }) {
           <div className="eyebrow">Overview</div>
           <h1>Dashboard</h1>
         </div>
-        <Link to="/machine/new" className="btn btn-primary">
-          + Add Machine
-        </Link>
+        {!isDashboardOnly && (
+          <Link to="/machine/new" className="btn btn-primary">
+            + Add Machine
+          </Link>
+        )}
       </div>
 
       <div className="stat-row">
@@ -118,106 +117,86 @@ export default function Dashboard({ machines, loading, standCount, tickets }) {
       </div>
 
       <div className="panel" style={{ marginBottom: 24 }}>
-        <div className="section-title">Machine stand inventory</div>
-        <div className="section-sub">
-          Current stock available to include with dispatches. Add stock as new
-          stands come in.
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 20, flexWrap: "wrap" }}>
-          <div>
-            <div className="num" style={{ fontFamily: "var(--font-display)", fontSize: 30, color: standCount > 0 ? "var(--paper)" : "var(--rust)" }}>
-              {standCount}
-            </div>
-            <div className="label" style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--paper-dim)", textTransform: "uppercase" }}>
-              in stock
-            </div>
-          </div>
-          <form onSubmit={handleAddStock} style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
-            <div className="field" style={{ marginBottom: 0 }}>
-              <label>Add stock</label>
-              <input
-                type="number"
-                min="1"
-                value={stockInput}
-                onChange={(e) => setStockInput(e.target.value)}
-                placeholder="qty"
-                style={{ width: 90 }}
-              />
-            </div>
-            <button type="submit" className="btn btn-primary" disabled={stockSaving}>
-              {stockSaving ? "Adding…" : "Add"}
-            </button>
-          </form>
+        <div className="section-title">Notifications</div>
+        <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
+          <Link to="/notifications" className="status-tag" style={{ color: missingPackingCount > 0 ? "var(--rust)" : "var(--paper-dim)" }}>
+            {missingPackingCount} missing packing item{missingPackingCount === 1 ? "" : "s"}
+          </Link>
+          <Link to="/notifications" className="status-tag" style={{ color: warrantyExpiringCount > 0 ? "var(--amber)" : "var(--paper-dim)" }}>
+            {warrantyExpiringCount} warrant{warrantyExpiringCount === 1 ? "y" : "ies"} expiring soon
+          </Link>
         </div>
       </div>
 
-      <div className="panel">
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, flexWrap: "wrap", gap: 8 }}>
-          <div className="section-title">All machines</div>
-          {filter !== "All" && (
-            <button className="btn btn-ghost" onClick={() => setFilter("All")}>
-              Clear filter: {filter} ✕
-            </button>
+      {!isDashboardOnly && (
+        <div className="panel">
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, flexWrap: "wrap", gap: 8 }}>
+            <div className="section-title">All machines</div>
+            {filter !== "All" && (
+              <button className="btn btn-ghost" onClick={() => setFilter("All")}>
+                Clear filter: {filter} ✕
+              </button>
+            )}
+          </div>
+
+          {loading ? (
+            <div className="empty-state">Loading machines…</div>
+          ) : visible.length === 0 ? (
+            <div className="empty-state">
+              {machines.length === 0
+                ? "No machines added yet. Click \"Add Machine\" to create the first one."
+                : "No machines match this filter."}
+            </div>
+          ) : (
+            <div className="table-scroll">
+              <table className="machine-table">
+                <thead>
+                  <tr>
+                    <th>Machine No.</th>
+                    <th>Status</th>
+                    <th>Dispatch date</th>
+                    <th>Warranty</th>
+                    <th>Comment</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visible.map((m) => {
+                    const days = warrantyDaysRemaining(m);
+                    return (
+                      <tr key={m.id}>
+                        <td className="mno">
+                          <Link to={`/machine/${m.id}`} className="link">
+                            {m.machineNumber}
+                          </Link>
+                        </td>
+                        <td>
+                          <StatusTag status={m._status} />
+                        </td>
+                        <td>{m.dispatch?.date || "—"}</td>
+                        <td style={{ color: days !== null && days < 0 ? "var(--rust)" : days !== null && days <= 10 ? "var(--amber)" : undefined }}>
+                          {days === null ? "—" : days < 0 ? `Expired ${Math.abs(days)}d ago` : `${days}d left`}
+                        </td>
+                        <td style={{ maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {m.dispatch?.comment || "—"}
+                        </td>
+                        <td>
+                          <button
+                            className="btn btn-ghost"
+                            onClick={() => handleDelete(m.id, m.machineNumber)}
+                          >
+                            Delete
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
-
-        {loading ? (
-          <div className="empty-state">Loading machines…</div>
-        ) : visible.length === 0 ? (
-          <div className="empty-state">
-            {machines.length === 0
-              ? "No machines added yet. Click \"Add Machine\" to create the first one."
-              : "No machines match this filter."}
-          </div>
-        ) : (
-          <div className="table-scroll">
-            <table className="machine-table">
-              <thead>
-                <tr>
-                  <th>Machine No.</th>
-                  <th>Status</th>
-                  <th>Dispatch date</th>
-                  <th>Warranty</th>
-                  <th>Comment</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {visible.map((m) => {
-                  const days = warrantyDaysRemaining(m);
-                  return (
-                    <tr key={m.id}>
-                      <td className="mno">
-                        <Link to={`/machine/${m.id}`} className="link">
-                          {m.machineNumber}
-                        </Link>
-                      </td>
-                      <td>
-                        <StatusTag status={m._status} />
-                      </td>
-                      <td>{m.dispatch?.date || "—"}</td>
-                      <td style={{ color: days !== null && days < 0 ? "var(--rust)" : days !== null && days <= 10 ? "var(--amber)" : undefined }}>
-                        {days === null ? "—" : days < 0 ? `Expired ${Math.abs(days)}d ago` : `${days}d left`}
-                      </td>
-                      <td style={{ maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis" }}>
-                        {m.dispatch?.comment || "—"}
-                      </td>
-                      <td>
-                        <button
-                          className="btn btn-ghost"
-                          onClick={() => handleDelete(m.id, m.machineNumber)}
-                        >
-                          Delete
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+      )}
     </div>
   );
 }

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import StatusTag from "../components/StatusTag.jsx";
 import { computeStatus, warrantyDaysRemaining } from "../utils/status";
+import { ROLES } from "../constants";
 import ResistanceTab from "./tabs/ResistanceTab.jsx";
 import TemperatureTab from "./tabs/TemperatureTab.jsx";
 import PhotosTab from "./tabs/PhotosTab.jsx";
@@ -13,22 +14,23 @@ import InstallationTab from "./tabs/InstallationTab.jsx";
 import WarrantyTab from "./tabs/WarrantyTab.jsx";
 import MaintenanceTab from "./tabs/MaintenanceTab.jsx";
 
-const TABS = [
-  { key: "resistance", label: "Resistance" },
-  { key: "temperature", label: "Temperature" },
-  { key: "photos", label: "Photos" },
-  { key: "packing", label: "Packing Checklist" },
-  { key: "finalPacking", label: "Final Packing" },
-  { key: "dispatch", label: "Dispatch" },
-  { key: "delivery", label: "Delivery" },
-  { key: "installation", label: "Installation" },
-  { key: "warranty", label: "Warranty" },
-  { key: "maintenance", label: "Maintenance" },
+const ALL_TABS = [
+  { key: "resistance", label: "Resistance", roles: [ROLES.ADMIN, ROLES.PRODUCTION] },
+  { key: "temperature", label: "Temperature", roles: [ROLES.ADMIN, ROLES.PRODUCTION] },
+  { key: "photos", label: "Photos", roles: [ROLES.ADMIN, ROLES.PRODUCTION] },
+  { key: "packing", label: "Packing Checklist", roles: [ROLES.ADMIN, ROLES.PRODUCTION] },
+  { key: "finalPacking", label: "Final Packing", roles: [ROLES.ADMIN, ROLES.PRODUCTION] },
+  { key: "dispatch", label: "Dispatch", roles: [ROLES.ADMIN, ROLES.PRODUCTION] },
+  { key: "delivery", label: "Delivery", roles: [ROLES.ADMIN, ROLES.INSTALLATION] },
+  { key: "installation", label: "Installation", roles: [ROLES.ADMIN, ROLES.INSTALLATION] },
+  { key: "warranty", label: "Warranty", roles: [ROLES.ADMIN] },
+  { key: "maintenance", label: "Maintenance", roles: [ROLES.ADMIN] },
 ];
 
-export default function MachineDetail({ machines, standCount, tickets }) {
+export default function MachineDetail({ machines, standCount, tickets, role, currentUserEmail }) {
   const { id } = useParams();
-  const [tab, setTab] = useState("resistance");
+  const tabsForRole = ALL_TABS.filter((t) => t.roles.includes(role));
+  const [tab, setTab] = useState(tabsForRole[0]?.key || "resistance");
   const machine = machines.find((m) => m.id === id);
 
   if (!machine) {
@@ -44,6 +46,20 @@ export default function MachineDetail({ machines, standCount, tickets }) {
     );
   }
 
+  if (tabsForRole.length === 0) {
+    return (
+      <div>
+        <div className="empty-state">
+          You don't have access to machine details.{" "}
+          <Link to="/" className="link">
+            Back to dashboard
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  const activeTab = tabsForRole.find((t) => t.key === tab) ? tab : tabsForRole[0].key;
   const status = computeStatus(machine);
   const daysRemaining = warrantyDaysRemaining(machine);
 
@@ -53,6 +69,9 @@ export default function MachineDetail({ machines, standCount, tickets }) {
         <div>
           <div className="eyebrow">Machine Record</div>
           <h1>{machine.machineNumber}</h1>
+          {machine.installation?.installedBy && (
+            <div className="helper-text">Installed by {machine.installation.installedBy}</div>
+          )}
         </div>
         <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
           {daysRemaining !== null && (
@@ -70,10 +89,10 @@ export default function MachineDetail({ machines, standCount, tickets }) {
       </div>
 
       <div className="tab-bar">
-        {TABS.map((t) => (
+        {tabsForRole.map((t) => (
           <button
             key={t.key}
-            className={"tab-btn" + (tab === t.key ? " active" : "")}
+            className={"tab-btn" + (activeTab === t.key ? " active" : "")}
             onClick={() => setTab(t.key)}
           >
             {t.label}
@@ -81,16 +100,18 @@ export default function MachineDetail({ machines, standCount, tickets }) {
         ))}
       </div>
 
-      {tab === "resistance" && <ResistanceTab machine={machine} />}
-      {tab === "temperature" && <TemperatureTab machine={machine} />}
-      {tab === "photos" && <PhotosTab machine={machine} />}
-      {tab === "packing" && <PackingChecklistTab machine={machine} />}
-      {tab === "finalPacking" && <FinalPackingTab machine={machine} />}
-      {tab === "dispatch" && <DispatchTab machine={machine} standCount={standCount} />}
-      {tab === "delivery" && <DeliveryTab machine={machine} />}
-      {tab === "installation" && <InstallationTab machine={machine} />}
-      {tab === "warranty" && <WarrantyTab machine={machine} />}
-      {tab === "maintenance" && <MaintenanceTab machine={machine} tickets={tickets} />}
+      {activeTab === "resistance" && <ResistanceTab machine={machine} />}
+      {activeTab === "temperature" && <TemperatureTab machine={machine} />}
+      {activeTab === "photos" && <PhotosTab machine={machine} />}
+      {activeTab === "packing" && <PackingChecklistTab machine={machine} />}
+      {activeTab === "finalPacking" && <FinalPackingTab machine={machine} />}
+      {activeTab === "dispatch" && <DispatchTab machine={machine} standCount={standCount} />}
+      {activeTab === "delivery" && <DeliveryTab machine={machine} />}
+      {activeTab === "installation" && (
+        <InstallationTab machine={machine} currentUserEmail={currentUserEmail} />
+      )}
+      {activeTab === "warranty" && <WarrantyTab machine={machine} />}
+      {activeTab === "maintenance" && <MaintenanceTab machine={machine} tickets={tickets} />}
     </div>
   );
 }

@@ -1,20 +1,41 @@
 import { useMemo, useState } from "react";
 import { createTicket, updateTicket } from "../../utils/ticketsApi";
+import { uploadMachinePhoto, deleteMachinePhoto } from "../../utils/machinesApi";
 import { TICKET_STATUSES, emptyTicketDraft } from "../../constants";
 
-function TicketCard({ ticket }) {
+function TicketCard({ ticket, machineId }) {
   const [status, setStatus] = useState(ticket.status);
   const [scheduledResolutionDate, setScheduledResolutionDate] = useState(
     ticket.scheduledResolutionDate || ""
   );
   const [solution, setSolution] = useState(ticket.solution || "");
+  const [photo, setPhoto] = useState(ticket.photo || null);
+  const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const isClosing = status === "Closed";
 
+  async function handlePhotoUpload(file) {
+    if (!file) return;
+    setUploading(true);
+    try {
+      const { url, path } = await uploadMachinePhoto(machineId, "maintenance", file);
+      if (photo?.path) await deleteMachinePhoto(photo.path);
+      setPhoto({ url, path });
+    } catch (err) {
+      alert("Upload failed: " + err.message);
+    }
+    setUploading(false);
+  }
+
+  async function handleRemovePhoto() {
+    if (photo?.path) await deleteMachinePhoto(photo.path);
+    setPhoto(null);
+  }
+
   async function handleSave() {
     setSaving(true);
-    await updateTicket(ticket.id, { status, scheduledResolutionDate, solution });
+    await updateTicket(ticket.id, { status, scheduledResolutionDate, solution, photo });
     setSaving(false);
   }
 
@@ -61,16 +82,42 @@ function TicketCard({ ticket }) {
       </div>
 
       {isClosing && (
-        <div className="field">
-          <label>Solution provided</label>
-          <textarea
-            rows={2}
-            style={{ width: "100%", fontFamily: "var(--font-body)" }}
-            value={solution}
-            onChange={(e) => setSolution(e.target.value)}
-            placeholder="What fixed it…"
-          />
-        </div>
+        <>
+          <div className="field">
+            <label>Solution provided</label>
+            <textarea
+              rows={2}
+              style={{ width: "100%", fontFamily: "var(--font-body)" }}
+              value={solution}
+              onChange={(e) => setSolution(e.target.value)}
+              placeholder="What fixed it…"
+            />
+          </div>
+          <div className="field">
+            <label>Photo (optional)</label>
+            <div className="photo-grid" style={{ maxWidth: 150 }}>
+              {photo ? (
+                <div className="photo-slot">
+                  <img src={photo.url} alt="Resolution" />
+                  <button className="remove-btn" onClick={handleRemovePhoto}>Remove</button>
+                </div>
+              ) : (
+                <div className="photo-slot">
+                  <label>
+                    {uploading ? "Uploading…" : "+ Add photo"}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      disabled={uploading}
+                      onChange={(e) => handlePhotoUpload(e.target.files[0])}
+                    />
+                  </label>
+                </div>
+              )}
+            </div>
+          </div>
+        </>
       )}
 
       <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
@@ -162,7 +209,7 @@ export default function MaintenanceTab({ machine, tickets }) {
       {machineTickets.length === 0 ? (
         <div className="empty-state">No maintenance tickets for this machine yet.</div>
       ) : (
-        machineTickets.map((t) => <TicketCard key={t.id} ticket={t} />)
+        machineTickets.map((t) => <TicketCard key={t.id} ticket={t} machineId={machine.id} />)
       )}
     </div>
   );

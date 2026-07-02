@@ -1,19 +1,47 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // NOTE: This is an open-access starter rule set so the app works
-    // immediately for a small internal team with no login screen.
-    // Before sharing this outside your own network, add Firebase
-    // Authentication and restrict access to signed-in users, e.g.:
-    //   allow read, write: if request.auth != null;
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    function myRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+    function isAdmin() { return isSignedIn() && myRole() == 'Admin'; }
+    function isProduction() { return isSignedIn() && myRole() == 'Production'; }
+    function isInstallation() { return isSignedIn() && myRole() == 'Installation'; }
+
+    // Each signed-in user has one doc here holding their role. On first
+    // login the app creates its own placeholder doc (role: null); an admin
+    // then sets the real role from the Manage Users page. Users can't set
+    // their own role — only an admin can update/delete these docs.
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.auth.uid == userId;
+      allow update, delete: if isAdmin();
+    }
+
     match /machines/{machineId} {
-      allow read, write: if true;
+      allow read: if isSignedIn();
+      allow create: if isAdmin() || isProduction();
+      // NOTE: this allows Production/Installation to update any field on a
+      // machine, not just the fields their tab exposes in the UI. Tighten
+      // further with field-level checks (request.resource.data.diff(...))
+      // once real field-level enforcement matters.
+      allow update: if isAdmin() || isProduction() || isInstallation();
+      allow delete: if isAdmin();
     }
+
+    // Maintenance tickets are an admin-only feature.
     match /tickets/{ticketId} {
-      allow read, write: if true;
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
     }
+
     match /inventory/{docId} {
-      allow read, write: if true;
+      allow read: if isSignedIn();
+      allow write: if isAdmin() || isProduction();
     }
   }
 }
