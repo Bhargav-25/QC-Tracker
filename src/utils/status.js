@@ -10,7 +10,7 @@ export function computeStatus(machine) {
 
   const fp = machine.finalPacking || {};
   const finalPackingDone =
-    fp.machineBolted && fp.fastnersBox && fp.frontCover && fp.finalPacked;
+    fp.machineBolted?.url && fp.fastnersBox?.url && fp.frontCover?.url && fp.finalPacked?.url;
   if (finalPackingDone) return STATUS.PACKED;
 
   const resistanceStarted = (machine.resistance || []).some(
@@ -24,7 +24,7 @@ export function computeStatus(machine) {
   const packingStarted = Object.values(machine.packingChecklist || {}).some(
     Boolean
   );
-  const finalPackingStarted = Object.values(fp).some(Boolean);
+  const finalPackingStarted = Object.values(fp).some((v) => v?.url);
 
   if (
     resistanceStarted ||

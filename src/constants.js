@@ -45,17 +45,17 @@ export const emptyPackingSentBack = () =>
     return acc;
   }, {});
 
-// The final packing / assembly-line steps, done as a separate step.
+// The final packing / assembly-line steps — one photo proves each step was done.
 export const FINAL_PACKING_ITEMS = [
-  { key: "machineBolted", label: "Machine bolted" },
-  { key: "fastnersBox", label: "Fastners Box" },
-  { key: "frontCover", label: "Front cover" },
-  { key: "finalPacked", label: "Final packed" },
+  { key: "machineBolted", label: "Machine bolted", count: 1 },
+  { key: "fastnersBox", label: "Fastners Box", count: 1 },
+  { key: "frontCover", label: "Front cover", count: 1 },
+  { key: "finalPacked", label: "Final packed", count: 1 },
 ];
 
 export const emptyFinalPacking = () =>
   FINAL_PACKING_ITEMS.reduce((acc, item) => {
-    acc[item.key] = false;
+    acc[item.key] = null; // will hold { url, path } once a photo is uploaded
     return acc;
   }, {});
 
