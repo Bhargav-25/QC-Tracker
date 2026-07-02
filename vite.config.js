@@ -7,5 +7,5 @@ export default defineConfig({
   // IMPORTANT: if you deploy to GitHub Pages as a project site
   // (https://<user>.github.io/<repo-name>/), set base to '/<repo-name>/'.
   // If you deploy to a custom domain or a user/org root site, leave it as '/'.
-  base: '/qc-tracker/',
+  base: '/QC-Tracker/',
 })
