@@ -13,6 +13,11 @@ import { deleteMachine } from "../utils/machinesApi";
 
 export default function Dashboard({ machines, loading, tickets, role, currentUserEmail }) {
   const [filter, setFilter] = useState("All");
+  const [search, setSearch] = useState("");
+  const [sortField, setSortField] = useState(null); // 'machineNumber' | 'dispatchDate'
+  const [sortDir, setSortDir] = useState("asc");
+  const [pageSize, setPageSize] = useState(10);
+  const [page, setPage] = useState(1);
   const isDashboardOnly = role === ROLES.DASHBOARD;
 
   const withStatus = machines.map((m) => ({ ...m, _status: computeStatus(m) }));
@@ -35,8 +40,55 @@ export default function Dashboard({ machines, loading, tickets, role, currentUse
   const missingPackingCount = machines.reduce((sum, m) => sum + missingPackingItems(m).length, 0);
   const warrantyExpiringCount = machines.filter((m) => isWarrantyExpiringSoon(m)).length;
 
-  const visible =
-    filter === "All" ? withStatus : withStatus.filter((m) => m._status === filter);
+  let visible = filter === "All" ? withStatus : withStatus.filter((m) => m._status === filter);
+
+  const searchQuery = search.trim().toLowerCase();
+  if (searchQuery) {
+    visible = visible.filter(
+      (m) =>
+        m.machineNumber?.toLowerCase().includes(searchQuery) ||
+        m.dispatch?.comment?.toLowerCase().includes(searchQuery)
+    );
+  }
+
+  if (sortField) {
+    visible = [...visible].sort((a, b) => {
+      let av, bv;
+      if (sortField === "machineNumber") {
+        av = a.machineNumber || "";
+        bv = b.machineNumber || "";
+      } else {
+        av = a.dispatch?.date || "";
+        bv = b.dispatch?.date || "";
+        // Machines with no dispatch date always sort to the end, in either direction.
+        if (!av && !bv) return 0;
+        if (!av) return 1;
+        if (!bv) return -1;
+      }
+      const cmp = av.localeCompare(bv, undefined, { numeric: true, sensitivity: "base" });
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+  }
+
+  const totalPages = Math.max(1, Math.ceil(visible.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const pageStart = (currentPage - 1) * pageSize;
+  const pageItems = visible.slice(pageStart, pageStart + pageSize);
+
+  function toggleSort(field) {
+    if (sortField === field) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortField(field);
+      setSortDir("asc");
+    }
+    setPage(1);
+  }
+
+  function sortIndicator(field) {
+    if (sortField !== field) return "";
+    return sortDir === "asc" ? " ▲" : " ▼";
+  }
 
   async function handleDelete(id, machineNumber) {
     if (window.confirm(`Delete machine ${machineNumber}? This cannot be undone.`)) {
@@ -130,13 +182,32 @@ export default function Dashboard({ machines, loading, tickets, role, currentUse
 
       {!isDashboardOnly && (
         <div className="panel">
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, flexWrap: "wrap", gap: 8 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
             <div className="section-title">All machines</div>
-            {filter !== "All" && (
-              <button className="btn btn-ghost" onClick={() => setFilter("All")}>
-                Clear filter: {filter} ✕
-              </button>
-            )}
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+                placeholder="Search machine no. or comment…"
+                style={{ width: 220 }}
+              />
+              <select
+                value={filter}
+                onChange={(e) => { setFilter(e.target.value); setPage(1); }}
+                style={{ width: 160 }}
+              >
+                <option value="All">All statuses</option>
+                {Object.values(STATUS).map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+              {filter !== "All" && (
+                <button className="btn btn-ghost" onClick={() => { setFilter("All"); setPage(1); }}>
+                  Clear ✕
+                </button>
+              )}
+            </div>
           </div>
 
           {loading ? (
@@ -145,55 +216,88 @@ export default function Dashboard({ machines, loading, tickets, role, currentUse
             <div className="empty-state">
               {machines.length === 0
                 ? "No machines added yet. Click \"Add Machine\" to create the first one."
-                : "No machines match this filter."}
+                : "No machines match this filter or search."}
             </div>
           ) : (
-            <div className="table-scroll">
-              <table className="machine-table">
-                <thead>
-                  <tr>
-                    <th>Machine No.</th>
-                    <th>Status</th>
-                    <th>Dispatch date</th>
-                    <th>Warranty</th>
-                    <th>Comment</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {visible.map((m) => {
-                    const days = warrantyDaysRemaining(m);
-                    return (
-                      <tr key={m.id}>
-                        <td className="mno">
-                          <Link to={`/machine/${m.id}`} className="link">
-                            {m.machineNumber}
-                          </Link>
-                        </td>
-                        <td>
-                          <StatusTag status={m._status} />
-                        </td>
-                        <td>{m.dispatch?.date || "—"}</td>
-                        <td style={{ color: days !== null && days < 0 ? "var(--rust)" : days !== null && days <= 10 ? "var(--amber)" : undefined }}>
-                          {days === null ? "—" : days < 0 ? `Expired ${Math.abs(days)}d ago` : `${days}d left`}
-                        </td>
-                        <td style={{ maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis" }}>
-                          {m.dispatch?.comment || "—"}
-                        </td>
-                        <td>
-                          <button
-                            className="btn btn-ghost"
-                            onClick={() => handleDelete(m.id, m.machineNumber)}
-                          >
-                            Delete
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <>
+              <div className="table-scroll">
+                <table className="machine-table">
+                  <thead>
+                    <tr>
+                      <th style={{ cursor: "pointer" }} onClick={() => toggleSort("machineNumber")}>
+                        Machine No.{sortIndicator("machineNumber")}
+                      </th>
+                      <th>Status</th>
+                      <th style={{ cursor: "pointer" }} onClick={() => toggleSort("dispatchDate")}>
+                        Dispatch date{sortIndicator("dispatchDate")}
+                      </th>
+                      <th>Warranty</th>
+                      <th>Comment</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pageItems.map((m) => {
+                      const days = warrantyDaysRemaining(m);
+                      return (
+                        <tr key={m.id}>
+                          <td className="mno">
+                            <Link to={`/machine/${m.id}`} className="link">
+                              {m.machineNumber}
+                            </Link>
+                          </td>
+                          <td>
+                            <StatusTag status={m._status} />
+                          </td>
+                          <td>{m.dispatch?.date || "—"}</td>
+                          <td style={{ color: days !== null && days < 0 ? "var(--rust)" : days !== null && days <= 10 ? "var(--amber)" : undefined }}>
+                            {days === null ? "—" : days < 0 ? `Expired ${Math.abs(days)}d ago` : `${days}d left`}
+                          </td>
+                          <td style={{ maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis" }}>
+                            {m.dispatch?.comment || "—"}
+                          </td>
+                          <td>
+                            <button
+                              className="btn btn-ghost"
+                              onClick={() => handleDelete(m.id, m.machineNumber)}
+                            >
+                              Delete
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 16, flexWrap: "wrap", gap: 10 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span className="helper-text">Show</span>
+                  <select
+                    value={pageSize}
+                    onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
+                    style={{ width: 70 }}
+                  >
+                    {[5, 10, 30, 50].map((n) => (
+                      <option key={n} value={n}>{n}</option>
+                    ))}
+                  </select>
+                  <span className="helper-text">
+                    of {visible.length} machine{visible.length === 1 ? "" : "s"}
+                  </span>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <button className="btn btn-ghost" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={currentPage <= 1}>
+                    ← Prev
+                  </button>
+                  <span className="helper-text">Page {currentPage} of {totalPages}</span>
+                  <button className="btn btn-ghost" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={currentPage >= totalPages}>
+                    Next →
+                  </button>
+                </div>
+              </div>
+            </>
           )}
         </div>
       )}
