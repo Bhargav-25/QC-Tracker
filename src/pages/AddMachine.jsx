@@ -1,22 +1,30 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { createMachine } from "../utils/machinesApi";
+import { useNavigate, Link } from "react-router-dom";
+import { createMachine, findMachineByNumber } from "../utils/machinesApi";
 
 export default function AddMachine({ currentUserEmail }) {
   const [machineNumber, setMachineNumber] = useState("");
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+  const [duplicateOf, setDuplicateOf] = useState(null);
   const navigate = useNavigate();
 
   async function handleSubmit(e) {
     e.preventDefault();
+    setErrorMsg("");
+    setDuplicateOf(null);
     if (!machineNumber.trim()) {
       setErrorMsg("Enter a machine number before saving.");
       return;
     }
     setSaving(true);
-    setErrorMsg("");
     try {
+      const existing = await findMachineByNumber(machineNumber);
+      if (existing) {
+        setDuplicateOf(existing);
+        setSaving(false);
+        return;
+      }
       const id = await createMachine(machineNumber.trim(), currentUserEmail);
       navigate(`/machine/${id}`);
     } catch (err) {
@@ -48,7 +56,10 @@ export default function AddMachine({ currentUserEmail }) {
               type="text"
               placeholder="e.g. MC-1042"
               value={machineNumber}
-              onChange={(e) => setMachineNumber(e.target.value)}
+              onChange={(e) => {
+                setMachineNumber(e.target.value);
+                setDuplicateOf(null);
+              }}
               autoFocus
             />
           </div>
@@ -57,8 +68,20 @@ export default function AddMachine({ currentUserEmail }) {
               {errorMsg}
             </div>
           )}
+          {duplicateOf && (
+            <div
+              className="helper-text"
+              style={{ color: "var(--rust)", marginBottom: 12, border: "1px solid var(--rust)", borderRadius: "var(--radius)", padding: 12 }}
+            >
+              Machine number "{duplicateOf.machineNumber}" already exists.{" "}
+              <Link to={`/machine/${duplicateOf.id}`} className="link">
+                Open the existing record
+              </Link>{" "}
+              instead of creating a duplicate.
+            </div>
+          )}
           <button type="submit" className="btn btn-primary" disabled={saving}>
-            {saving ? "Saving…" : "Save & Continue"}
+            {saving ? "Checking…" : "Save & Continue"}
           </button>
         </form>
       </div>

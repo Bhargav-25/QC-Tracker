@@ -11,6 +11,7 @@ import StandInventory from "./pages/StandInventory.jsx";
 import MaintenanceAdmin from "./pages/MaintenanceAdmin.jsx";
 import ManageUsers from "./pages/ManageUsers.jsx";
 import AuditLog from "./pages/AuditLog.jsx";
+import DuplicateMachines from "./pages/DuplicateMachines.jsx";
 import { subscribeToMachines } from "./utils/machinesApi";
 import { subscribeToStandInventory } from "./utils/inventoryApi";
 import { subscribeToTickets } from "./utils/ticketsApi";
@@ -219,6 +220,14 @@ export default function App() {
           element={
             <Gate role={role} allow={[ROLES.ADMIN]}>
               <AuditLog />
+            </Gate>
+          }
+        />
+        <Route
+          path="/duplicates"
+          element={
+            <Gate role={role} allow={[ROLES.ADMIN]}>
+              <DuplicateMachines machines={machines} currentUserEmail={authUser.email} />
             </Gate>
           }
         />
