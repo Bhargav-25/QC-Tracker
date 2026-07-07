@@ -295,6 +295,66 @@ h4 {
   color: var(--rust);
 }
 
+/* ---------- Highlight cards: attention-grabbing inventory counts ---------- */
+.highlight-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+  margin-bottom: 28px;
+}
+
+.highlight-card {
+  border: 1px solid var(--line);
+  border-left: 5px solid var(--teal);
+  border-radius: var(--radius);
+  padding: 20px 22px;
+  background: linear-gradient(135deg, rgba(63, 176, 160, 0.10), var(--panel) 60%);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  text-align: left;
+  width: 100%;
+}
+
+.highlight-card.warn {
+  border-left-color: var(--rust);
+  background: linear-gradient(135deg, rgba(217, 93, 57, 0.14), var(--panel) 60%);
+}
+
+.highlight-card .highlight-num {
+  font-family: var(--font-display);
+  font-size: 40px;
+  line-height: 1;
+  color: var(--paper);
+}
+
+.highlight-card.warn .highlight-num {
+  color: var(--rust);
+}
+
+.highlight-card .highlight-label {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--paper-dim);
+  margin-top: 4px;
+}
+
+.highlight-card .highlight-tag {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--rust);
+  border: 1px solid var(--rust);
+  border-radius: 2px;
+  padding: 3px 8px;
+  flex-shrink: 0;
+}
+
 /* ---------- Status tag: stamped-tag signature element ---------- */
 .status-tag {
   font-family: var(--font-mono);

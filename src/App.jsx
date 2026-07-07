@@ -149,7 +149,7 @@ export default function App() {
           path="/"
           element={
             <Gate role={role} allow={[ROLES.ADMIN, ROLES.DASHBOARD]}>
-              <Dashboard machines={machines} loading={loading} tickets={tickets} role={role} currentUserEmail={authUser.email} />
+              <Dashboard machines={machines} loading={loading} tickets={tickets} role={role} currentUserEmail={authUser.email} standCount={standCount} />
             </Gate>
           }
         />

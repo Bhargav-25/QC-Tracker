@@ -11,7 +11,7 @@ import {
 import { STATUS, ROLES } from "../constants";
 import { deleteMachine } from "../utils/machinesApi";
 
-export default function Dashboard({ machines, loading, tickets, role, currentUserEmail }) {
+export default function Dashboard({ machines, loading, tickets, role, currentUserEmail, standCount }) {
   const [filter, setFilter] = useState("All");
   const [search, setSearch] = useState("");
   const [sortField, setSortField] = useState(null); // 'machineNumber' | 'dispatchDate'
@@ -107,6 +107,36 @@ export default function Dashboard({ machines, loading, tickets, role, currentUse
           <Link to="/machine/new" className="btn btn-primary">
             + Add Machine
           </Link>
+        )}
+      </div>
+
+      <div className="highlight-row">
+        <button
+          className="highlight-card"
+          onClick={() => { setFilter(STATUS.PACKED); setPage(1); }}
+          style={{ cursor: "pointer" }}
+        >
+          <div>
+            <div className="highlight-num">{counts[STATUS.PACKED]}</div>
+            <div className="highlight-label">Packed machines ready to dispatch</div>
+          </div>
+        </button>
+        {role === ROLES.ADMIN || role === ROLES.PRODUCTION ? (
+          <Link to="/stand-inventory" className={"highlight-card" + (standCount <= 2 ? " warn" : "")}>
+            <div>
+              <div className="highlight-num">{standCount}</div>
+              <div className="highlight-label">Machine stands in stock</div>
+            </div>
+            {standCount <= 2 && <span className="highlight-tag">{standCount === 0 ? "Out of stock" : "Low stock"}</span>}
+          </Link>
+        ) : (
+          <div className={"highlight-card" + (standCount <= 2 ? " warn" : "")}>
+            <div>
+              <div className="highlight-num">{standCount}</div>
+              <div className="highlight-label">Machine stands in stock</div>
+            </div>
+            {standCount <= 2 && <span className="highlight-tag">{standCount === 0 ? "Out of stock" : "Low stock"}</span>}
+          </div>
         )}
       </div>
 
