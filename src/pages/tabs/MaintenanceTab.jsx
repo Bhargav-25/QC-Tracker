@@ -135,7 +135,6 @@ function TicketCard({ ticket, machineId, machineNumber, currentUserEmail }) {
                         <input
                           type="file"
                           accept="image/*"
-                          capture="environment"
                           disabled={uploading}
                           onChange={(e) => handlePhotoUpload(e.target.files[0])}
                         />

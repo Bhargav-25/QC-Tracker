@@ -115,7 +115,6 @@ export default function PhotosTab({ machine, currentUserEmail }) {
                         <input
                           type="file"
                           accept="image/*"
-                          capture="environment"
                           disabled={busy}
                           onChange={(e) => handleReplace(cat.key, i, e.target.files[0])}
                         />
@@ -130,7 +129,6 @@ export default function PhotosTab({ machine, currentUserEmail }) {
                       <input
                         type="file"
                         accept="image/*"
-                        capture="environment"
                         disabled={busy}
                         onChange={(e) => handleUpload(cat.key, e.target.files[0])}
                       />

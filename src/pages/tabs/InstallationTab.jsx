@@ -188,7 +188,6 @@ export default function InstallationTab({ machine, currentUserEmail }) {
                   <input
                     type="file"
                     accept="image/*"
-                    capture="environment"
                     disabled={busy}
                     onChange={(e) => handleUploadPhoto(i, e.target.files[0])}
                   />
@@ -219,7 +218,6 @@ export default function InstallationTab({ machine, currentUserEmail }) {
                 <input
                   type="file"
                   accept="video/*"
-                  capture="environment"
                   disabled={uploadingSlot === "video"}
                   onChange={(e) => handleUploadVideo(e.target.files[0])}
                 />

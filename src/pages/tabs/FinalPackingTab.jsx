@@ -91,7 +91,6 @@ export default function FinalPackingTab({ machine, currentUserEmail }) {
                     <input
                       type="file"
                       accept="image/*"
-                      capture="environment"
                       disabled={busy}
                       onChange={(e) => handleUpload(item.key, e.target.files[0], photo)}
                     />
@@ -104,7 +103,6 @@ export default function FinalPackingTab({ machine, currentUserEmail }) {
                     <input
                       type="file"
                       accept="image/*"
-                      capture="environment"
                       disabled={busy}
                       onChange={(e) => handleUpload(item.key, e.target.files[0], null)}
                     />
