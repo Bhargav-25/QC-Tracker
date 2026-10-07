@@ -1,3 +1,4 @@
+import ViewableImage from "../../components/ViewableImage.jsx";
 import { useMemo, useState } from "react";
 import { createTicket, updateTicket } from "../../utils/ticketsApi";
 import { uploadMachinePhoto, deleteMachinePhoto } from "../../utils/machinesApi";
@@ -125,7 +126,7 @@ function TicketCard({ ticket, machineId, machineNumber, currentUserEmail }) {
                 <div className="photo-grid" style={{ maxWidth: 150 }}>
                   {photo ? (
                     <div className="photo-slot">
-                      <img src={photo.url} alt="Resolution" />
+                      <ViewableImage src={photo.url} alt="Resolution" />
                       <button className="remove-btn" onClick={handleRemovePhoto}>Remove</button>
                     </div>
                   ) : (

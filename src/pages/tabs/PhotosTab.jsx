@@ -1,3 +1,4 @@
+import ViewableImage from "../../components/ViewableImage.jsx";
 import { useState } from "react";
 import { PHOTO_CATEGORIES } from "../../constants";
 import {
@@ -87,7 +88,7 @@ export default function PhotosTab({ machine, currentUserEmail }) {
                 if (item) {
                   return (
                     <div className="photo-slot" key={i}>
-                      <img src={item.url} alt={`${cat.label} ${i + 1}`} />
+                      <ViewableImage src={item.url} alt={`${cat.label} ${i + 1}`} />
                       <button
                         className="remove-btn"
                         onClick={() => handleRemove(cat.key, i)}

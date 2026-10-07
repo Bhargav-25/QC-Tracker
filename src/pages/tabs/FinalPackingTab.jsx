@@ -1,3 +1,4 @@
+import ViewableImage from "../../components/ViewableImage.jsx";
 import { useState } from "react";
 import { FINAL_PACKING_ITEMS } from "../../constants";
 import {
@@ -67,7 +68,7 @@ export default function FinalPackingTab({ machine, currentUserEmail }) {
             <div className="photo-grid" style={{ maxWidth: 220 }}>
               {photo?.url ? (
                 <div className="photo-slot">
-                  <img src={photo.url} alt={item.label} />
+                  <ViewableImage src={photo.url} alt={item.label} />
                   <button className="remove-btn" onClick={() => handleRemove(item.key)} disabled={busy}>
                     Remove
                   </button>

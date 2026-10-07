@@ -1,3 +1,4 @@
+import ViewableImage from "../../components/ViewableImage.jsx";
 import { useState } from "react";
 import { updateMachine, uploadMachinePhoto, deleteMachinePhoto } from "../../utils/machinesApi";
 import SectionMeta from "../../components/SectionMeta.jsx";
@@ -176,7 +177,7 @@ export default function InstallationTab({ machine, currentUserEmail }) {
             const busy = uploadingSlot === "photo-" + i;
             return photo ? (
               <div className="photo-slot" key={i}>
-                <img src={photo.url} alt={`Installation ${i + 1}`} />
+                <ViewableImage src={photo.url} alt={`Installation ${i + 1}`} />
                 <button className="remove-btn" onClick={() => handleRemovePhoto(i)} disabled={busy}>
                   Remove
                 </button>
