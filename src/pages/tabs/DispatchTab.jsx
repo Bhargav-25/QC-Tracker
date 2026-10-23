@@ -2,17 +2,25 @@ import { useState } from "react";
 import { updateMachine } from "../../utils/machinesApi";
 import { decrementStandForDispatch, returnStandToInventory } from "../../utils/inventoryApi";
 import SectionMeta from "../../components/SectionMeta.jsx";
+import { ACCESSORY_SHIP_STATUSES, COURIERS } from "../../domain/orderModel.js";
 
 export default function DispatchTab({ machine, standCount, currentUserEmail }) {
-  const [dispatched, setDispatched] = useState(machine.dispatch?.dispatched || false);
-  const [date, setDate] = useState(machine.dispatch?.date || "");
-  const [comment, setComment] = useState(machine.dispatch?.comment || "");
-  const [includeStand, setIncludeStand] = useState(machine.dispatch?.includeStand || false);
+  const dispatch = machine.dispatch || {};
+  const [dispatched, setDispatched] = useState(dispatch.dispatched || false);
+  const [date, setDate] = useState(dispatch.date || "");
+  const [comment, setComment] = useState(dispatch.comment || "");
+  const [includeStand, setIncludeStand] = useState(dispatch.includeStand || false);
+  const [courier, setCourier] = useState(dispatch.courier || "");
+  const [trackingNumber, setTrackingNumber] = useState(dispatch.trackingNumber || "");
+  const [accessoriesSeparate, setAccessoriesSeparate] = useState(Boolean(dispatch.accessoriesSeparate));
+  const [accessoriesCourier, setAccessoriesCourier] = useState(dispatch.accessoriesCourier || "");
+  const [accessoriesTracking, setAccessoriesTracking] = useState(dispatch.accessoriesTracking || "");
+  const [accessoriesSentOn, setAccessoriesSentOn] = useState(dispatch.accessoriesSentOn || "");
+  const [accessoriesStatus, setAccessoriesStatus] = useState(dispatch.accessoriesStatus || "Not sent");
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
 
-  const alreadyDispatchedWithStand =
-    machine.dispatch?.dispatched && machine.dispatch?.includeStand;
+  const alreadyDispatchedWithStand = machine.dispatch?.dispatched && machine.dispatch?.includeStand;
 
   function handleMarkDispatched() {
     setDispatched(true);
@@ -38,7 +46,21 @@ export default function DispatchTab({ machine, standCount, currentUserEmail }) {
 
       await updateMachine(
         machine.id,
-        { dispatch: { dispatched, date, comment, includeStand } },
+        {
+          dispatch: {
+            dispatched,
+            date,
+            comment,
+            includeStand,
+            courier,
+            trackingNumber,
+            accessoriesSeparate,
+            accessoriesCourier,
+            accessoriesTracking,
+            accessoriesSentOn,
+            accessoriesStatus,
+          },
+        },
         { userEmail: currentUserEmail, section: "dispatch", machineNumber: machine.machineNumber }
       );
     } catch (err) {
@@ -49,11 +71,10 @@ export default function DispatchTab({ machine, standCount, currentUserEmail }) {
     setSaving(false);
   }
 
-  const standCheckboxDisabled =
-    !dispatched || (!includeStand && standCount <= 0);
+  const standCheckboxDisabled = !dispatched || (!includeStand && standCount <= 0);
 
   return (
-    <div className="panel" style={{ maxWidth: 480 }}>
+    <div className="panel dispatch-panel" style={{ maxWidth: 560 }}>
       <div className="section-title">Dispatch</div>
       <div className="section-sub">
         Mark this machine as dispatched once it has left the facility.
@@ -65,10 +86,7 @@ export default function DispatchTab({ machine, standCount, currentUserEmail }) {
           Mark as Dispatched
         </button>
       ) : (
-        <div
-          className="helper-text"
-          style={{ color: "var(--teal)", marginBottom: 16 }}
-        >
+        <div className="helper-text" style={{ color: "var(--teal)", marginBottom: 16 }}>
           Marked as dispatched.{" "}
           <button className="btn btn-ghost" onClick={() => setDispatched(false)}>
             Undo
@@ -78,10 +96,32 @@ export default function DispatchTab({ machine, standCount, currentUserEmail }) {
 
       <div className="field" style={{ marginTop: 16 }}>
         <label>Date of dispatch</label>
+        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+      </div>
+
+      <div className="field">
+        <label>Courier</label>
+        <div className="segmented" role="group" aria-label="Courier">
+          {COURIERS.map((name) => (
+            <button
+              key={name}
+              type="button"
+              className={courier === name ? "active" : ""}
+              onClick={() => setCourier(courier === name ? "" : name)}
+            >
+              {name}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="field">
+        <label>Tracking no.</label>
         <input
-          type="date"
-          value={date}
-          onChange={(e) => setDate(e.target.value)}
+          type="text"
+          value={trackingNumber}
+          onChange={(e) => setTrackingNumber(e.target.value)}
+          placeholder="Tracking number"
         />
       </div>
 
@@ -114,6 +154,73 @@ export default function DispatchTab({ machine, standCount, currentUserEmail }) {
         </div>
       )}
 
+      <div className="accessories-block">
+        <div className="section-title">Accessories</div>
+        <label className="toggle-row">
+          <span>Shipped separately from machine</span>
+          <input
+            type="checkbox"
+            checked={accessoriesSeparate}
+            onChange={(e) => setAccessoriesSeparate(e.target.checked)}
+          />
+        </label>
+
+        {accessoriesSeparate && (
+          <>
+            <div className="field">
+              <label>Accessories courier</label>
+              <div className="segmented" role="group" aria-label="Accessories courier">
+                {COURIERS.map((name) => (
+                  <button
+                    key={name}
+                    type="button"
+                    className={accessoriesCourier === name ? "active" : ""}
+                    onClick={() => setAccessoriesCourier(accessoriesCourier === name ? "" : name)}
+                  >
+                    {name}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="field-row">
+              <div className="field">
+                <label>Tracking no.</label>
+                <input
+                  type="text"
+                  value={accessoriesTracking}
+                  onChange={(e) => setAccessoriesTracking(e.target.value)}
+                />
+              </div>
+              <div className="field">
+                <label>Sent on</label>
+                <input
+                  type="date"
+                  value={accessoriesSentOn}
+                  onChange={(e) => setAccessoriesSentOn(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="field">
+              <label>Accessories status</label>
+              <div className="segmented" role="group" aria-label="Accessories status">
+                {ACCESSORY_SHIP_STATUSES.map((name) => (
+                  <button
+                    key={name}
+                    type="button"
+                    className={accessoriesStatus === name ? "active" : ""}
+                    onClick={() => setAccessoriesStatus(name)}
+                  >
+                    {name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+
       {errorMsg && (
         <div className="helper-text" style={{ color: "var(--rust)", marginBottom: 12 }}>
           {errorMsg}
@@ -121,7 +228,7 @@ export default function DispatchTab({ machine, standCount, currentUserEmail }) {
       )}
 
       <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
-        {saving ? "Saving…" : "Save"}
+        {saving ? "Saving…" : "Save dispatch"}
       </button>
     </div>
   );

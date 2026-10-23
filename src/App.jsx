@@ -12,7 +12,10 @@ import MaintenanceAdmin from "./pages/MaintenanceAdmin.jsx";
 import ManageUsers from "./pages/ManageUsers.jsx";
 import AuditLog from "./pages/AuditLog.jsx";
 import DuplicateMachines from "./pages/DuplicateMachines.jsx";
+import OrdersList from "./pages/OrdersList.jsx";
+import OrderDetail from "./pages/OrderDetail.jsx";
 import { subscribeToMachines } from "./utils/machinesApi";
+import { subscribeToOrders } from "./utils/ordersApi";
 import { subscribeToStandInventory } from "./utils/inventoryApi";
 import { subscribeToTickets } from "./utils/ticketsApi";
 import { missingPackingItems, isWarrantyExpiringSoon } from "./utils/status";
@@ -29,6 +32,7 @@ const HOME_BY_ROLE = {
   [ROLES.PRODUCTION]: "/machines",
   [ROLES.INSTALLATION]: "/machines",
   [ROLES.DASHBOARD]: "/",
+  [ROLES.SALES]: "/orders",
 };
 
 function Gate({ role, allow, children }) {
@@ -48,6 +52,8 @@ export default function App() {
   const [standCount, setStandCount] = useState(0);
   const [tickets, setTickets] = useState([]);
   const [allUsers, setAllUsers] = useState([]);
+  const [orders, setOrders] = useState([]);
+  const [ordersError, setOrdersError] = useState(null);
 
   useEffect(() => {
     return onAuthChange(async (user) => {
@@ -98,6 +104,20 @@ export default function App() {
     const unsub = subscribeToUsers(setAllUsers);
     return unsub;
   }, [authUser, roleDoc]);
+
+  // Orders failing (for example before the new rules are published) must not
+  // take down machines, the dashboard, or sign-in.
+  useEffect(() => {
+    if (!authUser) return;
+    const unsub = subscribeToOrders(
+      (data) => {
+        setOrders(data);
+        setOrdersError(null);
+      },
+      (err) => setOrdersError(err)
+    );
+    return unsub;
+  }, [authUser]);
 
   // Still checking auth state on first load.
   if (authUser === undefined) {
@@ -175,8 +195,44 @@ export default function App() {
             <Gate role={role} allow={[ROLES.ADMIN, ROLES.PRODUCTION, ROLES.INSTALLATION]}>
               <MachineDetail
                 machines={machines}
+                orders={orders}
                 standCount={standCount}
                 tickets={tickets}
+                role={role}
+                currentUserEmail={authUser.email}
+              />
+            </Gate>
+          }
+        />
+        <Route
+          path="/orders"
+          element={
+            <Gate role={role} allow={[ROLES.ADMIN, ROLES.SALES, ROLES.PRODUCTION]}>
+              <OrdersList orders={orders} machines={machines} role={role} ordersError={ordersError} />
+            </Gate>
+          }
+        />
+        <Route
+          path="/orders/new"
+          element={
+            <Gate role={role} allow={[ROLES.ADMIN, ROLES.SALES]}>
+              <OrderDetail
+                orders={orders}
+                machines={machines}
+                role={role}
+                currentUserEmail={authUser.email}
+                creating
+              />
+            </Gate>
+          }
+        />
+        <Route
+          path="/orders/:groupNumber"
+          element={
+            <Gate role={role} allow={[ROLES.ADMIN, ROLES.SALES, ROLES.PRODUCTION, ROLES.INSTALLATION]}>
+              <OrderDetail
+                orders={orders}
+                machines={machines}
                 role={role}
                 currentUserEmail={authUser.email}
               />

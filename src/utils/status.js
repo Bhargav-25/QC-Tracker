@@ -1,4 +1,4 @@
-import { STATUS, DEFAULT_WARRANTY_YEARS, WARRANTY_EXPIRY_WARNING_DAYS } from "../constants";
+import { STATUS, DEFAULT_WARRANTY_YEARS, WARRANTY_EXPIRY_WARNING_DAYS } from "../constants.js";
 
 // Derives the current lifecycle status of a machine from its data.
 // This is computed, not stored, so it can never drift out of sync —

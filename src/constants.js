@@ -89,6 +89,13 @@ export const emptyDispatch = () => ({
   date: "",
   comment: "",
   includeStand: false,
+  courier: "",
+  trackingNumber: "",
+  accessoriesSeparate: false,
+  accessoriesCourier: "",
+  accessoriesTracking: "",
+  accessoriesSentOn: "",
+  accessoriesStatus: "Not sent",
 });
 
 export const emptyDelivery = () => ({ delivered: false, date: "" });
@@ -118,6 +125,13 @@ export const ROLES = {
   PRODUCTION: "Production",
   INSTALLATION: "Installation",
   DASHBOARD: "Dashboard",
+  SALES: "Sales",
 };
 
-export const ALL_ROLES = [ROLES.ADMIN, ROLES.PRODUCTION, ROLES.INSTALLATION, ROLES.DASHBOARD];
+export const ALL_ROLES = [
+  ROLES.ADMIN,
+  ROLES.PRODUCTION,
+  ROLES.INSTALLATION,
+  ROLES.DASHBOARD,
+  ROLES.SALES,
+];

@@ -11,6 +11,23 @@ service cloud.firestore {
     function isAdmin() { return isSignedIn() && myRole() == 'Admin'; }
     function isProduction() { return isSignedIn() && myRole() == 'Production'; }
     function isInstallation() { return isSignedIn() && myRole() == 'Installation'; }
+    function isSales() { return isSignedIn() && myRole() == 'Sales'; }
+
+    function orderStatusOk(s) {
+      return s == 'Pause Shipment' || s == 'Please Ship' || s == 'Cancelled';
+    }
+    function orderPaymentOk(s) {
+      return s == 'Paid' || s == 'Advance' || s == 'COD' || s == 'Cancelled';
+    }
+    // True when `field` was not part of this write, or its new value is allowed.
+    function statusChangeOk() {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(['status'])
+        || orderStatusOk(request.resource.data.status);
+    }
+    function paymentChangeOk() {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(['payment'])
+        || orderPaymentOk(request.resource.data.payment);
+    }
 
     // Each signed-in user has one doc here holding their role. On first
     // login the app creates its own placeholder doc (role: null); an admin
@@ -22,8 +39,49 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
 
+    // Customer orders, keyed by group number (see groupNumberToId in the app:
+    // "/" in a group number is stored as "~" in the document id).
+    // Sales creates and edits order details only — not the machine link.
+    // Production assigns or clears the machine. Installation may refresh the
+    // denormalized fulfillmentStatus when delivery / installation is saved.
+    // Admin can do all of that. The one-time sheet import uses the Admin SDK
+    // and is not limited by these rules.
+    match /orders/{orderId} {
+      allow read: if isSignedIn();
+
+      allow create: if (isAdmin() || isSales())
+        && request.resource.data.groupNumber is string
+        && request.resource.data.groupNumber.size() > 0
+        && request.resource.data.groupNumber.size() < 80
+        && orderId == request.resource.data.groupNumber.replace('/', '~')
+        && orderStatusOk(request.resource.data.status)
+        && orderPaymentOk(request.resource.data.payment)
+        && request.resource.data.customer is string
+        && request.resource.data.machineId == ''
+        && request.resource.data.machineNumber == '';
+
+      allow update: if request.resource.data.groupNumber == resource.data.groupNumber
+        && (
+          isAdmin()
+          || (isSales()
+              && !request.resource.data.diff(resource.data).affectedKeys()
+                  .hasAny(['machineId', 'machineNumber', 'fulfillmentStatus'])
+              && statusChangeOk()
+              && paymentChangeOk())
+          || (isProduction()
+              && request.resource.data.diff(resource.data).affectedKeys()
+                  .hasOnly(['machineId', 'machineNumber', 'fulfillmentStatus', 'updatedAt', 'updatedBy']))
+          || (isInstallation()
+              && request.resource.data.diff(resource.data).affectedKeys()
+                  .hasOnly(['fulfillmentStatus', 'updatedAt', 'updatedBy']))
+        );
+
+      allow delete: if isAdmin();
+    }
+
     match /machines/{machineId} {
       allow read: if isSignedIn();
+      // Sales is intentionally absent: that role edits orders, not machines.
       allow create: if isAdmin() || isProduction();
       // NOTE: this allows Production/Installation to update any field on a
       // machine, not just the fields their tab exposes in the UI. Tighten

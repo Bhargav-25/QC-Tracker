@@ -8,6 +8,7 @@ import {
   query,
   where,
   getDocs,
+  getDoc,
   orderBy,
   serverTimestamp,
 } from "firebase/firestore";
@@ -31,6 +32,7 @@ import {
   STATUS_ORDER,
 } from "../constants";
 import { logAction } from "./auditApi";
+import { refreshOrderFulfillment } from "./ordersApi.js";
 import { computeStatus } from "./status";
 
 const machinesCol = collection(db, "machines");
@@ -99,6 +101,16 @@ export async function updateMachine(id, data, meta) {
       section: meta.section,
       action: meta.action || "updated " + (meta.section || "machine"),
     });
+  }
+  // Keep a linked order's badge in step with this machine. Failure here must
+  // not fail the machine save (rules may not be published yet).
+  try {
+    const snap = await getDoc(docRef);
+    if (snap.exists() && snap.data().groupNumber) {
+      await refreshOrderFulfillment({ id, ...snap.data() });
+    }
+  } catch (err) {
+    console.warn("Could not refresh linked order status:", err);
   }
 }
 
@@ -221,6 +233,7 @@ export function buildMergedMachine(group) {
 
     merged.sectionMeta = { ...(other.sectionMeta || {}), ...(merged.sectionMeta || {}) };
     merged.createdBy = merged.createdBy || other.createdBy;
+    merged.groupNumber = merged.groupNumber || other.groupNumber || "";
   }
 
   return { mergedDoc: merged, keepId: base.id, removeIds: others.map((o) => o.id) };

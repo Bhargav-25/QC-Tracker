@@ -35,7 +35,8 @@ export default function ManageUsers({ users }) {
           1. In the Firebase console, go to Authentication → Users → Add user,
           and create their email + password there. 2. Have them sign in once
           on this site — they'll appear below with no role. 3. Pick a role
-          for them here.
+          for them here. Sales can create and edit orders only. Production
+          assigns a Packed machine to an order; Admin can do both.
         </div>
       </div>
 
