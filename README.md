@@ -296,6 +296,151 @@ GET /v1/orders/G1458
 `status` must be Pause Shipment, Please Ship, or Cancelled. `payment` must
 be Paid, Advance, COD, or Cancelled. Dates are `YYYY-MM-DD`.
 
+### Machines API (inventory bot)
+
+A second HTTPS function, `machinesApi`, is read-only. It uses its own secret,
+`MACHINES_READ_API_KEY`. The orders key is not accepted here, and this key
+is not accepted by `api`. Send it the same way as the orders API:
+
+```
+X-API-Key: <MACHINES_READ_API_KEY>
+```
+
+`Authorization: Bearer <MACHINES_READ_API_KEY>` also works. A missing or
+wrong key is `401`. Any method other than `GET` is `405`.
+
+The base URL is printed at deploy. It looks like:
+
+```
+https://<region>-<project-id>.cloudfunctions.net/machinesApi
+```
+
+Find it in the deploy log (`Function URL (machinesApi)`) or in Firebase
+console → Functions → `machinesApi`. Paths below are relative to that base.
+A `/v1` prefix is accepted and optional.
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/machines` | List machines. |
+| GET | `/machines/<machineNumber>` | One machine. `404` if it does not exist. |
+| GET | `/inventory/machine-stand` | Stand stock `{ count, updatedAt }`. |
+
+`GET /machines` query parameters:
+
+- `updatedSince` — ISO datetime. Keeps machines whose `updatedAt` is at or after that instant.
+- `status` — one status or several separated by commas. Applied after the status is computed. The values are the same strings the app shows: `Assembly stage`, `Testing`, `Packed`, `Dispatched`, `Delivered`, `Installed`. `Assembly` is accepted as an alias for `Assembly stage`.
+- `limit` — default 200, maximum 1000 (higher values are clamped).
+- `pageToken` — the previous response's `nextPageToken`. `cursor` is an alias.
+
+Results are ordered by `updatedAt`, then `id`, oldest first. `nextPageToken`
+is `null` on the last page.
+
+Each machine includes `machineNumber`, `id`, `createdAt`, `updatedAt` (ISO),
+`batch` (`X33M002` → `33`, otherwise `null`), `status` from the same
+`computeStatus` function the app uses, `statusReachedAt` (a best estimate
+for every status), and `sectionTimestamps` (each section's `updatedAt`, so
+a consumer can apply its own rule). Testing is the earliest of resistance,
+temperature, photos, packing, and final packing. Packed is the final-packing
+timestamp once all four photos exist. Dispatched, Delivered, and Installed
+use that section's timestamp. Assembly uses `createdAt`.
+
+`dispatch`, `delivery`, and `installation` include the flags and dates, plus
+courier and tracking fields on dispatch. `groupNo` is the linked order, or
+`null`. Media is presence only: photo counts, final-packing booleans,
+`installationPhotos`, and `hasVideo`. URLs and storage paths are not returned.
+
+```
+curl -sS \
+  -H "X-API-Key: $MACHINES_READ_API_KEY" \
+  "$BASE/machines?updatedSince=2026-10-01T00:00:00.000Z&status=Packed,Dispatched&limit=200"
+
+curl -sS \
+  -H "X-API-Key: $MACHINES_READ_API_KEY" \
+  "$BASE/machines/X33M047"
+
+curl -sS \
+  -H "X-API-Key: $MACHINES_READ_API_KEY" \
+  "$BASE/inventory/machine-stand"
+```
+
+`GET /machines/X33M047`:
+
+```json
+{
+  "ok": true,
+  "machine": {
+    "id": "m47",
+    "machineNumber": "X33M047",
+    "createdAt": "2026-10-01T00:00:00.000Z",
+    "updatedAt": "2026-10-21T08:30:00.000Z",
+    "batch": 33,
+    "status": "Dispatched",
+    "statusReachedAt": {
+      "Assembly stage": "2026-10-01T00:00:00.000Z",
+      "Testing": "2026-10-04T00:00:00.000Z",
+      "Packed": "2026-10-18T00:00:00.000Z",
+      "Dispatched": "2026-10-21T08:30:00.000Z",
+      "Delivered": null,
+      "Installed": null
+    },
+    "sectionTimestamps": {
+      "resistance": "2026-10-04T00:00:00.000Z",
+      "temperature": null,
+      "photos": "2026-10-06T00:00:00.000Z",
+      "packing": null,
+      "finalPacking": "2026-10-18T00:00:00.000Z",
+      "dispatch": "2026-10-21T08:30:00.000Z",
+      "delivery": null,
+      "installation": null
+    },
+    "dispatch": {
+      "dispatched": true,
+      "date": "2026-10-21",
+      "includeStand": true,
+      "courier": "Safexpress",
+      "trackingNumber": "18471189815",
+      "accessoriesSeparate": true,
+      "accessoriesCourier": "Delhivery",
+      "accessoriesTracking": "2780 4413 096",
+      "accessoriesSentOn": "2026-10-22",
+      "accessoriesStatus": "In transit"
+    },
+    "delivery": { "delivered": false, "date": "" },
+    "installation": { "installed": false, "date": "" },
+    "groupNo": "G1443",
+    "photos": { "ropeBurn": 2, "shoulderPulley": 0, "led": 0, "armEnd": 0 },
+    "finalPacking": {
+      "machineBolted": true,
+      "fastnersBox": true,
+      "frontCover": true,
+      "finalPacked": true
+    },
+    "installationPhotos": 0,
+    "hasVideo": false
+  }
+}
+```
+
+`GET /machines` returns `{ "ok": true, "machines": [ ...same shape ], "nextPageToken": null }`.
+
+`GET /inventory/machine-stand`:
+
+```json
+{ "ok": true, "count": 6, "updatedAt": "2026-05-01T00:00:00.000Z" }
+```
+
+Deploy this function yourself (Blaze plan). Do not commit the key.
+
+```
+openssl rand -hex 32
+firebase functions:secrets:set MACHINES_READ_API_KEY
+firebase deploy --only functions
+```
+
+`firebase deploy --only functions:machinesApi` deploys just this function
+after the secret exists. The placeholder in the curl examples is the shell
+variable, not a real key.
+
 ### Sheet mirror
 
 `syncOrderToSheet` runs when an order is written. `syncMachineToSheet` runs
@@ -373,31 +518,37 @@ rules, and does not write to the live project.
 3. **Rules.** Review `firestore.rules`, then
    `firebase deploy --only firestore:rules`. This publishes the Sales role
    and the `orders` collection. It does not touch existing documents.
-4. **API key secret.** Pick a long random string and store it only as a
+4. **Orders API key.** Pick a long random string and store it only as a
    secret: `firebase functions:secrets:set ORDERS_API_KEY`. Do not put it in
    `.env`, GitHub, or the sheet.
-5. **Sheets service account.** In Google Cloud (same project, or any project
+5. **Machines read API key.** Generate a different key and store it as its
+   own secret. The orders key will not authorize these reads.
+   `openssl rand -hex 32`, then
+   `firebase functions:secrets:set MACHINES_READ_API_KEY`.
+6. **Sheets service account.** In Google Cloud (same project, or any project
    you control): APIs & Services → enable **Google Sheets API**. IAM →
    create a service account. Create a JSON key. Share the orders spreadsheet
    with that service account's email as **Editor**. Then
    `firebase functions:secrets:set SHEETS_SERVICE_ACCOUNT` and paste the
    whole JSON when prompted. An empty secret skips the mirror; a bad key is
    logged and not retried forever. Sheets rate limits are retried.
-6. **Deploy functions.** `npm install` inside `functions/`, then
+7. **Deploy functions.** `npm install` inside `functions/`, then
    `firebase deploy --only functions`. The predeploy hook bundles
    `functions/lib` (the directory Cloud Functions actually uploads). Note
-   the `api` URL from the deploy output and give it to the sales bot with
-   the API key. If the function rejects anonymous callers, the deploy used
-   a private invoker: the function is declared `invoker: "public"` and the
-   API key is what authorizes the bot.
-7. **Sales user.** Authentication → Add user (email + password). Have them
+   both URLs from the deploy output: `api` for the sales bot and
+   `machinesApi` for the inventory bot. If a function rejects anonymous
+   callers, the deploy used a private invoker: both are declared
+   `invoker: "public"` and the API key is what authorizes the caller.
+8. **Sales user.** Authentication → Add user (email + password). Have them
    sign in once. As Admin, open Manage Users and set the role to **Sales**.
-8. **Import.** Dry-run the script, read the unmatched report, then
+9. **Import.** Dry-run the script, read the unmatched report, then
    `--commit` if you want Firestore filled from the sheets.
-9. **Bot.** Point the sales bot at `POST` and `PATCH` on the `api` URL.
-   Stop writing new rows to the sheet; QC Track is the source of truth and
-   the sheet is the read-only mirror.
+10. **Bots.** Point the sales bot at `POST` and `PATCH` on the `api` URL.
+    Point the inventory bot at `GET` on the `machinesApi` URL with
+    `MACHINES_READ_API_KEY`. Stop writing new rows to the sheet; QC Track is
+    the source of truth and the sheet is the read-only mirror.
 
-`npm test` covers order status, the sheet row, import matching, and the HTTP
-handler. `npm run build` is still the GitHub Pages build and does not deploy
-functions.
+`npm test` covers order status, the sheet row, import matching, the orders
+HTTP handler, and the read-only machines API (auth, filters, status, and
+no media URLs). `npm run build` is still the GitHub Pages build and does
+not deploy functions.

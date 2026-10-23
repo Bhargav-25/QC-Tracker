@@ -3,7 +3,8 @@ import { onDocumentWritten } from "firebase-functions/v2/firestore";
 import { defineSecret } from "firebase-functions/params";
 import { initializeApp } from "firebase-admin/app";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
-import { timingSafeEqual } from "node:crypto";
+import { keysMatch, presentedApiKey } from "../src/domain/apiKey.js";
+import { handleMachinesHttp, matchMachinesRoute } from "../src/domain/machinesHttp.js";
 import { handleOrdersHttp, matchOrdersRoute } from "../src/domain/ordersHttp.js";
 import { groupNumberToId, normalizeGroupNumber } from "../src/domain/orderModel.js";
 import { syncOrderToSheet as writeOrderRow } from "./sheetSync.js";
@@ -12,20 +13,11 @@ initializeApp();
 const db = getFirestore();
 
 const ordersApiKey = defineSecret("ORDERS_API_KEY");
+const machinesReadApiKey = defineSecret("MACHINES_READ_API_KEY");
 const sheetsServiceAccount = defineSecret("SHEETS_SERVICE_ACCOUNT");
 
 function authorized(req) {
-  const expected = String(ordersApiKey.value() || "");
-  const header = String(req.get("authorization") || "");
-  const xKey = String(req.get("x-api-key") || "");
-  let presented = "";
-  if (header.toLowerCase().startsWith("bearer ")) presented = header.slice(7).trim();
-  else if (xKey) presented = xKey.trim();
-  if (!expected || !presented) return false;
-  const a = Buffer.from(presented);
-  const b = Buffer.from(expected);
-  if (a.length !== b.length) return false;
-  return timingSafeEqual(a, b);
+  return keysMatch(String(ordersApiKey.value() || ""), presentedApiKey(req.headers));
 }
 
 function serializeValue(value) {
@@ -149,6 +141,46 @@ async function syncGroups(groupNumbers) {
     throw err;
   }
 }
+
+// Read-only inventory feed. This function's only secret is the read key, so
+// the orders write key is not accepted here, and this handler never writes.
+export const machinesApi = onRequest(
+  { secrets: [machinesReadApiKey], cors: false, invoker: "public", timeoutSeconds: 60 },
+  async (req, res) => {
+    const expectedKey = String(machinesReadApiKey.value() || "");
+    const headers = req.headers;
+    let machines = [];
+    let stand = null;
+    try {
+      if (keysMatch(expectedKey, presentedApiKey(headers)) && req.method === "GET") {
+        const route = matchMachinesRoute(req.path || "/");
+        if (route.kind === "list" || route.kind === "machine") {
+          const snap = await db.collection("machines").get();
+          machines = snap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+        } else if (route.kind === "stand") {
+          const snap = await db.collection("inventory").doc("machineStand").get();
+          stand = snap.exists ? snap.data() : null;
+        }
+      }
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ ok: false, error: "Machines API failed." });
+      return;
+    }
+
+    const result = handleMachinesHttp({
+      method: req.method,
+      urlPath: req.path || "/",
+      query: req.query,
+      headers,
+      expectedKey,
+      machines,
+      stand,
+    });
+    if (result.allow) res.setHeader("Allow", result.allow);
+    res.status(result.status).json(result.body);
+  }
+);
 
 export const syncOrderToSheet = onDocumentWritten(
   {
