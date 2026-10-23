@@ -13,6 +13,15 @@ dist-ssr
 *.local
 .env
 
+# Cloud Functions build output and local installs
+functions/node_modules
+functions/lib
+scripts/node_modules
+
+# One-time order import writes a report that contains customer data
+import-report.json
+import-report.txt
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

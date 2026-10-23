@@ -13,6 +13,7 @@ import DeliveryTab from "./tabs/DeliveryTab.jsx";
 import InstallationTab from "./tabs/InstallationTab.jsx";
 import WarrantyTab from "./tabs/WarrantyTab.jsx";
 import MaintenanceTab from "./tabs/MaintenanceTab.jsx";
+import MachineOrderCard from "../components/MachineOrderCard.jsx";
 
 const ALL_TABS = [
   { key: "resistance", label: "Resistance", roles: [ROLES.ADMIN, ROLES.PRODUCTION] },
@@ -27,7 +28,7 @@ const ALL_TABS = [
   { key: "maintenance", label: "Maintenance", roles: [ROLES.ADMIN] },
 ];
 
-export default function MachineDetail({ machines, standCount, tickets, role, currentUserEmail }) {
+export default function MachineDetail({ machines, orders = [], standCount, tickets, role, currentUserEmail }) {
   const { id } = useParams();
   const tabsForRole = ALL_TABS.filter((t) => t.roles.includes(role));
   const [tab, setTab] = useState(tabsForRole[0]?.key || "resistance");
@@ -62,6 +63,11 @@ export default function MachineDetail({ machines, standCount, tickets, role, cur
   const activeTab = tabsForRole.find((t) => t.key === tab) ? tab : tabsForRole[0].key;
   const status = computeStatus(machine);
   const daysRemaining = warrantyDaysRemaining(machine);
+  const linkedOrder = orders.find(
+    (order) =>
+      (machine.groupNumber && order.groupNumber === machine.groupNumber) ||
+      (order.machineId && order.machineId === machine.id)
+  );
 
   return (
     <div>
@@ -87,6 +93,8 @@ export default function MachineDetail({ machines, standCount, tickets, role, cur
           <StatusTag status={status} />
         </div>
       </div>
+
+      <MachineOrderCard order={linkedOrder} role={role} />
 
       <div className="tab-bar">
         {tabsForRole.map((t) => (

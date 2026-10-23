@@ -6,6 +6,7 @@ const NAV_BY_ROLE = {
   [ROLES.ADMIN]: [
     { to: "/", label: "Dashboard", end: true },
     { to: "/machines", label: "Machines" },
+    { to: "/orders", label: "Orders" },
     { to: "/machine/new", label: "Add Machine" },
     { to: "/stand-inventory", label: "Stand Inventory" },
     { to: "/maintenance", label: "Maintenance" },
@@ -16,6 +17,7 @@ const NAV_BY_ROLE = {
   ],
   [ROLES.PRODUCTION]: [
     { to: "/machines", label: "Machines", end: true },
+    { to: "/orders", label: "Orders" },
     { to: "/machine/new", label: "Add Machine" },
     { to: "/stand-inventory", label: "Stand Inventory" },
     { to: "/notifications", label: "Notifications", showBadge: true },
@@ -25,6 +27,9 @@ const NAV_BY_ROLE = {
   ],
   [ROLES.DASHBOARD]: [
     { to: "/", label: "Dashboard", end: true },
+  ],
+  [ROLES.SALES]: [
+    { to: "/orders", label: "Orders", end: true },
   ],
 };
 
