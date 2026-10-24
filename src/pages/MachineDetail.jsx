@@ -14,6 +14,9 @@ import InstallationTab from "./tabs/InstallationTab.jsx";
 import WarrantyTab from "./tabs/WarrantyTab.jsx";
 import MaintenanceTab from "./tabs/MaintenanceTab.jsx";
 import MachineOrderCard from "../components/MachineOrderCard.jsx";
+import RefurbishedBadge from "../components/RefurbishedBadge.jsx";
+import ReturnTab from "./tabs/ReturnTab.jsx";
+import RefurbTab from "./tabs/RefurbTab.jsx";
 
 const ALL_TABS = [
   { key: "resistance", label: "Resistance", roles: [ROLES.ADMIN, ROLES.PRODUCTION] },
@@ -22,13 +25,15 @@ const ALL_TABS = [
   { key: "packing", label: "Packing Checklist", roles: [ROLES.ADMIN, ROLES.PRODUCTION] },
   { key: "finalPacking", label: "Final Packing", roles: [ROLES.ADMIN, ROLES.PRODUCTION] },
   { key: "dispatch", label: "Dispatch", roles: [ROLES.ADMIN, ROLES.PRODUCTION] },
+  { key: "return", label: "Return", roles: [ROLES.ADMIN, ROLES.PRODUCTION] },
+  { key: "refurb", label: "Refurbish", roles: [ROLES.ADMIN, ROLES.PRODUCTION] },
   { key: "delivery", label: "Delivery", roles: [ROLES.ADMIN, ROLES.INSTALLATION] },
   { key: "installation", label: "Installation", roles: [ROLES.ADMIN, ROLES.INSTALLATION] },
   { key: "warranty", label: "Warranty", roles: [ROLES.ADMIN] },
   { key: "maintenance", label: "Maintenance", roles: [ROLES.ADMIN] },
 ];
 
-export default function MachineDetail({ machines, orders = [], standCount, tickets, role, currentUserEmail }) {
+export default function MachineDetail({ machines, orders = [], standCount, tickets, role, currentUserEmail, parts = [], preview = false }) {
   const { id } = useParams();
   const tabsForRole = ALL_TABS.filter((t) => t.roles.includes(role));
   const [tab, setTab] = useState(tabsForRole[0]?.key || "resistance");
@@ -91,6 +96,7 @@ export default function MachineDetail({ machines, orders = [], standCount, ticke
             </span>
           )}
           <StatusTag status={status} />
+          <RefurbishedBadge machine={machine} />
         </div>
       </div>
 
@@ -114,6 +120,8 @@ export default function MachineDetail({ machines, orders = [], standCount, ticke
       {activeTab === "packing" && <PackingChecklistTab machine={machine} currentUserEmail={currentUserEmail} />}
       {activeTab === "finalPacking" && <FinalPackingTab machine={machine} currentUserEmail={currentUserEmail} />}
       {activeTab === "dispatch" && <DispatchTab machine={machine} standCount={standCount} currentUserEmail={currentUserEmail} />}
+      {activeTab === "return" && <ReturnTab machine={machine} currentUserEmail={currentUserEmail} preview={preview} />}
+      {activeTab === "refurb" && <RefurbTab machine={machine} parts={parts} currentUserEmail={currentUserEmail} preview={preview} />}
       {activeTab === "delivery" && <DeliveryTab machine={machine} currentUserEmail={currentUserEmail} />}
       {activeTab === "installation" && (
         <InstallationTab machine={machine} currentUserEmail={currentUserEmail} />

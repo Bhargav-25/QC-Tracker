@@ -1,6 +1,8 @@
 import { STATUS } from "../constants";
 
 const classMap = {
+  [STATUS.RETURNED]: "returned",
+  [STATUS.REFURBISHING]: "refurbishing",
   [STATUS.ASSEMBLY]: "assembly",
   [STATUS.TESTING]: "testing",
   [STATUS.PACKED]: "packed",

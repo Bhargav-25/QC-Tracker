@@ -3,7 +3,11 @@ import Layout from "../components/Layout.jsx";
 import OrdersList from "../pages/OrdersList.jsx";
 import OrderDetail from "../pages/OrderDetail.jsx";
 import MachineDetail from "../pages/MachineDetail.jsx";
+import Dashboard from "../pages/Dashboard.jsx";
+import PartsPage from "../pages/PartsPage.jsx";
+import ReviveQueuePage from "../pages/ReviveQueuePage.jsx";
 import { ROLES, emptyResistanceRows } from "../constants.js";
+import { previewParts, previewQueue, previewReturnMachines } from "./refurbSample.js";
 
 // Dev-only sample screens. main.jsx loads this only when import.meta.env.DEV
 // is true, so the production GitHub Pages bundle does not include it.
@@ -75,6 +79,7 @@ const machines = [
     },
     warranty: { extensions: [] },
   },
+  ...previewReturnMachines,
 ];
 
 const orders = [
@@ -230,8 +235,24 @@ function machineDetail() {
       orders={orders}
       standCount={6}
       tickets={[]}
-      role={ROLES.PRODUCTION}
+      role={ROLES.ADMIN}
       currentUserEmail="production@example.com"
+      parts={previewParts}
+      preview
+    />
+  );
+}
+
+function dashboard() {
+  return (
+    <Dashboard
+      machines={machines}
+      loading={false}
+      tickets={[]}
+      role={ROLES.ADMIN}
+      currentUserEmail="production@example.com"
+      standCount={6}
+      reviveQueueCount={previewQueue.filter((item) => item.status === "queued").length}
     />
   );
 }
@@ -244,11 +265,17 @@ export default function PreviewApp() {
         <Route path="/__preview/orders/new" element={orderDetail(true)} />
         <Route path="/__preview/orders/:groupNumber" element={orderDetail()} />
         <Route path="/__preview/machine/:id" element={machineDetail()} />
+        <Route path="/__preview" element={dashboard()} />
+        <Route path="/__preview/parts" element={<PartsPage parts={previewParts} role={ROLES.ADMIN} currentUserEmail="admin@example.com" preview />} />
+        <Route path="/__preview/revive" element={<ReviveQueuePage items={previewQueue} currentUserEmail="production@example.com" preview />} />
         {/* Same paths the real pages link to, so clicks stay inside this preview. */}
         <Route path="/orders" element={ordersList()} />
         <Route path="/orders/new" element={orderDetail(true)} />
         <Route path="/orders/:groupNumber" element={orderDetail()} />
         <Route path="/machine/:id" element={machineDetail()} />
+        <Route path="/" element={dashboard()} />
+        <Route path="/parts" element={<PartsPage parts={previewParts} role={ROLES.ADMIN} currentUserEmail="admin@example.com" preview />} />
+        <Route path="/revive" element={<ReviveQueuePage items={previewQueue} currentUserEmail="production@example.com" preview />} />
       </Routes>
     </Layout>
   );

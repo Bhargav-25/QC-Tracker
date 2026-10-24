@@ -380,6 +380,12 @@ h4 {
   flex-shrink: 0;
 }
 
+.status-tag.returned {
+  color: var(--rust);
+}
+.status-tag.refurbishing {
+  color: var(--amber);
+}
 .status-tag.assembly {
   color: var(--paper-dim);
 }
@@ -397,6 +403,46 @@ h4 {
 }
 .status-tag.installed {
   color: #4fbf6a;
+}
+
+.refurbished-badge {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--teal);
+  border: 1px solid var(--teal);
+  border-radius: 2px;
+  padding: 3px 8px;
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0 16px;
+}
+
+.chip {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: var(--panel-raised);
+  color: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.chip.active {
+  border-color: var(--amber);
+  color: var(--amber);
+}
+
+.chip:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 /* ---------- Machine table (dashboard) ---------- */
@@ -518,6 +564,17 @@ h4 {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--paper-dim);
+}
+
+.field label.choice {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-family: var(--font-body);
+  font-size: 14px;
+  color: var(--paper);
 }
 
 .field-row {

@@ -324,11 +324,13 @@ A `/v1` prefix is accepted and optional.
 | GET | `/machines` | List machines. |
 | GET | `/machines/<machineNumber>` | One machine. `404` if it does not exist. |
 | GET | `/inventory/machine-stand` | Stand stock `{ count, updatedAt }`. |
+| GET | `/parts` | Catalog plus revived stock. |
+| GET | `/part-movements` | Append-only part ledger. |
 
 `GET /machines` query parameters:
 
 - `updatedSince` — ISO datetime. Keeps machines whose `updatedAt` is at or after that instant.
-- `status` — one status or several separated by commas. Applied after the status is computed. The values are the same strings the app shows: `Assembly stage`, `Testing`, `Packed`, `Dispatched`, `Delivered`, `Installed`. `Assembly` is accepted as an alias for `Assembly stage`.
+- `status` — one status or several separated by commas. Applied after the status is computed. The values are the same strings the app shows: `Returned`, `Refurbishing`, `Assembly stage`, `Testing`, `Packed`, `Dispatched`, `Delivered`, `Installed`. `Assembly` is accepted as an alias for `Assembly stage`.
 - `limit` — default 200, maximum 1000 (higher values are clamped).
 - `pageToken` — the previous response's `nextPageToken`. `cursor` is an alias.
 
@@ -423,6 +425,88 @@ curl -sS \
 
 `GET /machines` returns `{ "ok": true, "machines": [ ...same shape ], "nextPageToken": null }`.
 
+`GET /part-movements` is the append-only part ledger, ordered by `timestamp` then `id`.
+Query parameters: `updatedSince` (ISO datetime), `type` (one or more of
+`NEW_PART_USED`, `REVIVED_PART_USED`, `SENT_TO_REVIVE`, `REVIVED_TO_STOCK`,
+`SCRAPPED`), `limit` (default 200, max 1000), and `pageToken`. Undo does not
+delete a row. It appends another row with the same `type`, a negative `qty`,
+`reversal: true`, and `reversesId` set to the original id. Sum `qty` per part
+and type. Ids are stable, so a client can dedupe if a page is fetched twice.
+
+`GET /parts` is the catalog plus the revived-stock count for each part.
+Same `limit`, `updatedSince`, and `pageToken`. Ordered by `code`. `frequency`
+is `common`, `occasional`, or `null`.
+
+```
+curl -sS \
+  -H "X-API-Key: $MACHINES_READ_API_KEY" \
+  "$BASE/part-movements?updatedSince=2026-10-01T00:00:00.000Z&type=SENT_TO_REVIVE,REVIVED_TO_STOCK&limit=200"
+
+curl -sS \
+  -H "X-API-Key: $MACHINES_READ_API_KEY" \
+  "$BASE/parts"
+```
+
+`GET /part-movements`:
+
+```json
+{
+  "ok": true,
+  "movements": [
+    {
+      "id": "3f1c0a2e-7b14-4a2e-9c11-0b5a6d7e8f90",
+      "type": "SENT_TO_REVIVE",
+      "partCode": "0000018",
+      "qty": 1,
+      "machineNumber": "X33M047",
+      "cycle": 2,
+      "timestamp": "2026-10-21T10:15:00.000Z",
+      "user": "workshop@example.com",
+      "reversal": false,
+      "reversesId": null
+    }
+  ],
+  "nextPageToken": null
+}
+```
+
+`GET /parts`:
+
+```json
+{
+  "ok": true,
+  "parts": [
+    {
+      "code": "0000044",
+      "name": "Slider Spacer",
+      "group": "Slider",
+      "unit": "pcs",
+      "revivable": false,
+      "frequency": "occasional",
+      "revivedStock": 0,
+      "updatedAt": "2026-10-20T00:00:00.000Z"
+    },
+    {
+      "code": "0000056",
+      "name": "Hooks (carabiners)",
+      "group": "Main Sub",
+      "unit": "pcs",
+      "revivable": false,
+      "frequency": "common",
+      "revivedStock": 0,
+      "updatedAt": "2026-10-20T00:00:00.000Z"
+    }
+  ],
+  "nextPageToken": null
+}
+```
+
+A machine that has been returned also includes `cycle`, `refurbished`,
+`cycles` (previous customers: dispatch, delivery, installation, warranty,
+group number, and the return that closed that cycle), and `return` (the
+open or latest intake, with refurb lines). Photo fields are counts only.
+There are no URLs or storage paths.
+
 `GET /inventory/machine-stand`:
 
 ```json
@@ -440,6 +524,83 @@ firebase deploy --only functions
 `firebase deploy --only functions:machinesApi` deploys just this function
 after the secret exists. The placeholder in the curl examples is the shell
 variable, not a real key.
+
+## Returns, refurbishment, and the revive queue
+
+A customer can send a machine back. The workshop inspects it, fits replacement
+parts, re-runs QC, and sells it to the next customer under the **same
+machine number**.
+
+1. **Return** (Admin or Production, on the machine). Enter the return date,
+   reason, the group number it came from (prefilled from the current order
+   link), the date it was received at the workshop, inspection notes, and
+   photos. Saving archives that customer as the next entry in `cycles`
+   (cycle 1 is the first customer): dispatch, delivery, installation, the
+   order link, and warranty. The active checks are cleared so the machine
+   can be tested, packed, and linked to a new order. The previous order is
+   unlinked. Status becomes **Returned**.
+2. **Refurbish.** Log each replacement: part, qty, whether the fitted part
+   was **New** or **Revived**, and whether the part that came off is **Scrap**
+   or **Revive queue**. Common parts are quick-pick chips, then occasional
+   parts, then a search of the full catalog. Mark the refurb complete with a
+   date. Status is **Refurbishing** from the first logged part until that
+   date. After that, the normal Testing → Packed → Dispatched → Delivered →
+   Installed rules apply to the new cycle. Machines with more than one cycle
+   show a **Refurbished** badge.
+3. **Revive queue.** Lists parts waiting for an acid dip and recoat. **Revived**
+   adds them to that part's revived stock. **Failed** scraps them. Fitting a
+   Revived part decrements that stock and is blocked at zero, same as the
+   machine stand.
+4. **Ledger.** Every one of those actions appends a `partMovements` document
+   in the same transaction. Undo appends a reversing row. Rows are not deleted.
+
+Only parts flagged **revivable** can be sent to the revive queue (coated metal:
+frame and arm plates, Arm End SM Bend, shoulder plates, Slider SM, the
+electronics plate, and covers). Plastic and 3D-printed parts can only be
+scrapped. The revive option is hidden for them, and the security rules reject
+a revive-queue write for a part that is not revivable. Quantities for `mtr`
+parts (braided rope, LED channel) can be decimal. `pcs` quantities are whole
+numbers.
+
+`frequency` is `common`, `occasional`, or empty. It only changes the refurb
+picker. Common parts are the ones replaced most often (covers, rope end, arm
+end, hooks, accessories, arm, shoulder, knobs, caps, braided rope). Occasional
+parts are the slider family, the assembled motor, and the assembled controller.
+Hooks is displayed as **Hooks (carabiners)**.
+
+The revivable column in the seed file is a **default guess** (30 parts). The
+frequency column is also a default. Bhargav should review both on the Parts
+page. Admin edits stick: the seed will not overwrite `revivable` or `frequency`
+after an admin has changed them unless `--force` is passed.
+
+### Seed the catalog
+
+The file is `scripts/parts-catalog.csv` (112 rows:
+`code,name,group,unit,revivable,frequency`). Codes stay strings (`0000044`,
+`RM_TAB_MOUNT_SHAFT`).
+
+```
+node scripts/seed-parts.mjs
+```
+
+That is a dry run. It does not write. When the summary looks right:
+
+```
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json \
+  node scripts/seed-parts.mjs --commit
+```
+
+`--force` overwrites admin-edited revivable and frequency values. Revived
+stock is never changed by the seed. A service account with the Cloud
+Datastore User role is enough. Do not commit a key.
+
+### Rules
+
+`firestore.rules` covers `parts`, `partMovements`, `reviveQueue`, and
+`partCounts`. Admin and Production can write. Sales cannot read them.
+Dashboard can read `partCounts` (the revive-queue count) and still cannot
+read part rows, movements, or the queue. Publish the rules yourself. This
+repo does not deploy them.
 
 ### Sheet mirror
 
@@ -547,8 +708,19 @@ rules, and does not write to the live project.
     Point the inventory bot at `GET` on the `machinesApi` URL with
     `MACHINES_READ_API_KEY`. Stop writing new rows to the sheet; QC Track is
     the source of truth and the sheet is the read-only mirror.
+11. **Rules again, after this change.** `firebase deploy --only firestore:rules`
+    publishes `parts`, `partMovements`, `reviveQueue`, and `partCounts`.
+    It does not write documents.
+12. **Functions again.** `firebase deploy --only functions:machinesApi` picks
+    up `GET /parts`, `GET /part-movements`, and the return fields on machines.
+    Still GET-only, still `MACHINES_READ_API_KEY`.
+13. **Parts seed.** Dry-run `node scripts/seed-parts.mjs`, then `--commit`
+    with a service account. Bhargav should review the 30 revivable defaults
+    and the common / occasional frequency flags on the Parts page. Edits
+    there are kept on the next seed unless `--force` is used.
 
 `npm test` covers order status, the sheet row, import matching, the orders
-HTTP handler, and the read-only machines API (auth, filters, status, and
-no media URLs). `npm run build` is still the GitHub Pages build and does
-not deploy functions.
+HTTP handler, the read-only machines API (auth, filters, status, and no
+media URLs), and returns / refurb / the part ledger (including that the
+screen status and the API status match). `npm run build` is still the
+GitHub Pages build and does not deploy functions.

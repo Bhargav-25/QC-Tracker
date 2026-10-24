@@ -83,11 +83,127 @@ service cloud.firestore {
       allow read: if isSignedIn();
       // Sales is intentionally absent: that role edits orders, not machines.
       allow create: if isAdmin() || isProduction();
-      // NOTE: this allows Production/Installation to update any field on a
-      // machine, not just the fields their tab exposes in the UI. Tighten
-      // further with field-level checks (request.resource.data.diff(...))
-      // once real field-level enforcement matters.
-      allow update: if isAdmin() || isProduction() || isInstallation();
+      // Installation can update delivery / installation, not return history.
+      allow update: if isAdmin() || isProduction()
+        || (isInstallation()
+            && !request.resource.data.diff(resource.data).affectedKeys()
+                .hasAny(['intake', 'cycles', 'cycle']));
+      allow delete: if isAdmin();
+    }
+
+    function partUnitOk(unit) {
+      return unit == 'pcs' || unit == 'mtr';
+    }
+    function frequencyOk(value) {
+      return value == null || value == 'common' || value == 'occasional';
+    }
+    function validPart(data) {
+      return data.code is string
+        && data.code.size() > 0
+        && data.code.size() < 120
+        && data.name is string
+        && data.group is string
+        && partUnitOk(data.unit)
+        && data.revivable is bool
+        && data.revivedStock is number
+        && data.revivedStock >= 0
+        && frequencyOk(data.frequency)
+        && data.revivableEdited is bool
+        && data.frequencyEdited is bool;
+    }
+    // Production may change revived stock only. Catalog edits (including
+    // revivable and frequency) are Admin.
+    function stockTouchOnly() {
+      return request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['revivedStock', 'updatedAt', 'updatedBy'])
+        && request.resource.data.revivedStock is number
+        && request.resource.data.revivedStock >= 0;
+    }
+
+    // Parts catalog. Sales has no access. Dashboard cannot read part rows;
+    // it reads partCounts below.
+    match /parts/{partId} {
+      allow read: if isAdmin() || isProduction();
+      allow create: if isAdmin()
+        && validPart(request.resource.data)
+        && request.resource.data.code == partId;
+      allow update: if (isAdmin()
+          && validPart(request.resource.data)
+          && request.resource.data.code == partId
+          && request.resource.data.code == resource.data.code)
+        || ((isAdmin() || isProduction()) && stockTouchOnly());
+      allow delete: if isAdmin();
+    }
+
+    function movementTypeOk(type) {
+      return type == 'NEW_PART_USED'
+        || type == 'REVIVED_PART_USED'
+        || type == 'SENT_TO_REVIVE'
+        || type == 'REVIVED_TO_STOCK'
+        || type == 'SCRAPPED';
+    }
+    function validMovement() {
+      return request.resource.data.id == movementId
+        && movementTypeOk(request.resource.data.type)
+        && request.resource.data.partCode is string
+        && request.resource.data.partCode.size() > 0
+        && request.resource.data.qty is number
+        && request.resource.data.qty != 0
+        && request.resource.data.machineNumber is string
+        && request.resource.data.cycle is number
+        && request.resource.data.user is string
+        && request.resource.data.reversal is bool
+        && request.resource.data.reversesId is string
+        && (request.resource.data.reversal == false || request.resource.data.qty < 0)
+        && (request.resource.data.reversal == true || request.resource.data.qty > 0);
+    }
+    // Revive-queue sends are only for parts flagged revivable. A reversal
+    // of an earlier send is allowed even if the flag was edited later.
+    function reviveSendOk() {
+      return request.resource.data.type != 'SENT_TO_REVIVE'
+        || request.resource.data.reversal == true
+        || get(/databases/$(database)/documents/parts/$(request.resource.data.partCode)).data.revivable == true;
+    }
+
+    // Append-only ledger. Undo adds a reversing row; nothing is updated or deleted.
+    match /partMovements/{movementId} {
+      allow read: if isAdmin() || isProduction();
+      allow create: if (isAdmin() || isProduction()) && validMovement() && reviveSendOk();
+      allow update, delete: if false;
+    }
+
+    function partIsRevivable(code) {
+      return get(/databases/$(database)/documents/parts/$(code)).data.revivable == true;
+    }
+    function validQueuedPart() {
+      return request.resource.data.id == itemId
+        && request.resource.data.status == 'queued'
+        && request.resource.data.partCode is string
+        && request.resource.data.qty is number
+        && request.resource.data.qty > 0
+        && request.resource.data.machineNumber is string
+        && request.resource.data.cycle is number
+        && partIsRevivable(request.resource.data.partCode);
+    }
+
+    match /reviveQueue/{itemId} {
+      allow read: if isAdmin() || isProduction();
+      allow create: if (isAdmin() || isProduction()) && validQueuedPart();
+      allow update: if (isAdmin() || isProduction())
+        && request.resource.data.partCode == resource.data.partCode
+        && request.resource.data.qty == resource.data.qty
+        && request.resource.data.id == resource.data.id
+        && (request.resource.data.status == 'queued'
+            || request.resource.data.status == 'revived'
+            || request.resource.data.status == 'failed'
+            || request.resource.data.status == 'reversed');
+      allow delete: if false;
+    }
+
+    // Aggregate the revive queue can show without opening part rows.
+    match /partCounts/{docId} {
+      allow read: if isAdmin() || isProduction() || isDashboard();
+      allow create, update: if isAdmin() || isProduction();
       allow delete: if isAdmin();
     }
 

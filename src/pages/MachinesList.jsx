@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import StatusTag from "../components/StatusTag.jsx";
+import RefurbishedBadge from "../components/RefurbishedBadge.jsx";
 import { computeStatus } from "../utils/status";
 import { ROLES, STATUS } from "../constants";
 
@@ -13,7 +14,7 @@ function MachineRow({ machine }) {
         </Link>
       </td>
       <td>
-        <StatusTag status={status} />
+        <StatusTag status={status} /> <RefurbishedBadge machine={machine} />
       </td>
     </tr>
   );

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import StatusTag from "../components/StatusTag.jsx";
+import RefurbishedBadge from "../components/RefurbishedBadge.jsx";
 import {
   computeStatus,
   isInCurrentMonth,
@@ -11,7 +12,7 @@ import {
 import { STATUS, ROLES } from "../constants";
 import { deleteMachine } from "../utils/machinesApi";
 
-export default function Dashboard({ machines, loading, tickets, role, currentUserEmail, standCount }) {
+export default function Dashboard({ machines, loading, tickets, role, currentUserEmail, standCount, reviveQueueCount = 0 }) {
   const [filter, setFilter] = useState("All");
   const [search, setSearch] = useState("");
   const [sortField, setSortField] = useState(null); // 'machineNumber' | 'dispatchDate'
@@ -22,14 +23,7 @@ export default function Dashboard({ machines, loading, tickets, role, currentUse
 
   const withStatus = machines.map((m) => ({ ...m, _status: computeStatus(m) }));
 
-  const counts = {
-    [STATUS.ASSEMBLY]: 0,
-    [STATUS.TESTING]: 0,
-    [STATUS.PACKED]: 0,
-    [STATUS.DISPATCHED]: 0,
-    [STATUS.DELIVERED]: 0,
-    [STATUS.INSTALLED]: 0,
-  };
+  const counts = Object.fromEntries(Object.values(STATUS).map((status) => [status, 0]));
   withStatus.forEach((m) => counts[m._status]++);
 
   const packedMachines = withStatus.filter((m) => m._status === STATUS.PACKED);
@@ -145,6 +139,14 @@ export default function Dashboard({ machines, loading, tickets, role, currentUse
           <div className="num">{counts[STATUS.ASSEMBLY]}</div>
           <div className="label">Assembly stage</div>
         </button>
+        <button className="stat-card accent-rust" onClick={() => setFilter(STATUS.RETURNED)} style={{ textAlign: "left" }}>
+          <div className="num">{counts[STATUS.RETURNED]}</div>
+          <div className="label">Returned</div>
+        </button>
+        <button className="stat-card accent-amber" onClick={() => setFilter(STATUS.REFURBISHING)} style={{ textAlign: "left" }}>
+          <div className="num">{counts[STATUS.REFURBISHING]}</div>
+          <div className="label">Refurbishing</div>
+        </button>
         <button className="stat-card accent-amber" onClick={() => setFilter(STATUS.TESTING)} style={{ textAlign: "left" }}>
           <div className="num">{counts[STATUS.TESTING]}</div>
           <div className="label">Testing</div>
@@ -173,6 +175,17 @@ export default function Dashboard({ machines, loading, tickets, role, currentUse
           <div className="num">{maintenanceThisMonth}</div>
           <div className="label">Maintenance this month</div>
         </div>
+        {role === ROLES.ADMIN || role === ROLES.PRODUCTION ? (
+          <Link to="/revive" className="stat-card" style={{ textAlign: "left" }}>
+            <div className="num">{reviveQueueCount}</div>
+            <div className="label">In revive queue</div>
+          </Link>
+        ) : (
+          <div className="stat-card">
+            <div className="num">{reviveQueueCount}</div>
+            <div className="label">In revive queue</div>
+          </div>
+        )}
       </div>
 
       <div className="panel" style={{ marginBottom: 24 }}>
@@ -277,7 +290,7 @@ export default function Dashboard({ machines, loading, tickets, role, currentUse
                             </Link>
                           </td>
                           <td>
-                            <StatusTag status={m._status} />
+                            <StatusTag status={m._status} /> <RefurbishedBadge machine={m} />
                           </td>
                           <td>{m.dispatch?.date || "—"}</td>
                           <td style={{ color: days !== null && days < 0 ? "var(--rust)" : days !== null && days <= 10 ? "var(--amber)" : undefined }}>

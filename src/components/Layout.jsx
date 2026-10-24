@@ -9,6 +9,8 @@ const NAV_BY_ROLE = {
     { to: "/orders", label: "Orders" },
     { to: "/machine/new", label: "Add Machine" },
     { to: "/stand-inventory", label: "Stand Inventory" },
+    { to: "/parts", label: "Parts" },
+    { to: "/revive", label: "Revive Queue" },
     { to: "/maintenance", label: "Maintenance" },
     { to: "/notifications", label: "Notifications", showBadge: true },
     { to: "/manage-users", label: "Manage Users" },
@@ -20,6 +22,8 @@ const NAV_BY_ROLE = {
     { to: "/orders", label: "Orders" },
     { to: "/machine/new", label: "Add Machine" },
     { to: "/stand-inventory", label: "Stand Inventory" },
+    { to: "/parts", label: "Parts" },
+    { to: "/revive", label: "Revive Queue" },
     { to: "/notifications", label: "Notifications", showBadge: true },
   ],
   [ROLES.INSTALLATION]: [
