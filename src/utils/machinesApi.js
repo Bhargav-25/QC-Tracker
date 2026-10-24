@@ -29,10 +29,11 @@ import {
   emptyDelivery,
   emptyInstallation,
   emptyWarranty,
-  STATUS_ORDER,
+  STATUS_RANK,
 } from "../constants";
 import { logAction } from "./auditApi";
 import { refreshOrderFulfillment } from "./ordersApi.js";
+import { currentCycleNumber } from "../domain/machineCycle.js";
 import { computeStatus } from "./status";
 
 const machinesCol = collection(db, "machines");
@@ -69,6 +70,9 @@ export async function createMachine(machineNumber, userEmail) {
     installation: emptyInstallation(),
     warranty: emptyWarranty(),
     sectionMeta: {},
+    cycle: 1,
+    cycles: [],
+    intake: null,
   });
   await logAction({
     userEmail,
@@ -149,7 +153,7 @@ export async function deleteMachinePhoto(path) {
 // --- Duplicate cleanup -------------------------------------------------------
 
 function rank(machine) {
-  return STATUS_ORDER.indexOf(computeStatus(machine));
+  return STATUS_RANK[computeStatus(machine)] ?? 0;
 }
 
 function pickNonEmpty(a, b) {
@@ -234,6 +238,18 @@ export function buildMergedMachine(group) {
     merged.sectionMeta = { ...(other.sectionMeta || {}), ...(merged.sectionMeta || {}) };
     merged.createdBy = merged.createdBy || other.createdBy;
     merged.groupNumber = merged.groupNumber || other.groupNumber || "";
+
+    const seenCycles = new Set((merged.cycles || []).map((cycle) => `${cycle?.cycle}:${cycle?.closedAt || ""}`));
+    const cycles = [...(merged.cycles || [])];
+    for (const cycle of other.cycles || []) {
+      const key = `${cycle?.cycle}:${cycle?.closedAt || ""}`;
+      if (seenCycles.has(key)) continue;
+      seenCycles.add(key);
+      cycles.push(cycle);
+    }
+    merged.cycles = cycles;
+    merged.cycle = Math.max(currentCycleNumber(merged), currentCycleNumber(other));
+    if (!merged.intake && other.intake) merged.intake = other.intake;
   }
 
   return { mergedDoc: merged, keepId: base.id, removeIds: others.map((o) => o.id) };

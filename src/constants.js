@@ -60,6 +60,8 @@ export const emptyFinalPacking = () =>
   }, {});
 
 export const STATUS = {
+  RETURNED: "Returned",
+  REFURBISHING: "Refurbishing",
   ASSEMBLY: "Assembly stage",
   TESTING: "Testing",
   PACKED: "Packed",
@@ -68,7 +70,13 @@ export const STATUS = {
   INSTALLED: "Installed",
 };
 
+// Current-cycle pipeline. Returned and Refurbishing apply only while a return
+// is open; after refurbishment is complete the machine drops back to Assembly
+// and walks the rest of this list. Duplicate merge ranks by a separate map
+// so a returned record does not outrank one that is already installed.
 export const STATUS_ORDER = [
+  STATUS.RETURNED,
+  STATUS.REFURBISHING,
   STATUS.ASSEMBLY,
   STATUS.TESTING,
   STATUS.PACKED,
@@ -76,6 +84,17 @@ export const STATUS_ORDER = [
   STATUS.DELIVERED,
   STATUS.INSTALLED,
 ];
+
+export const STATUS_RANK = {
+  [STATUS.ASSEMBLY]: 0,
+  [STATUS.RETURNED]: 1,
+  [STATUS.REFURBISHING]: 2,
+  [STATUS.TESTING]: 3,
+  [STATUS.PACKED]: 4,
+  [STATUS.DISPATCHED]: 5,
+  [STATUS.DELIVERED]: 6,
+  [STATUS.INSTALLED]: 7,
+};
 
 // Warranty defaults to 1 year from the installation date, then can be
 // extended in whole months with an invoice reference each time.

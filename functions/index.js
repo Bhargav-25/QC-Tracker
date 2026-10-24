@@ -151,6 +151,8 @@ export const machinesApi = onRequest(
     const headers = req.headers;
     let machines = [];
     let stand = null;
+    let parts = [];
+    let movements = [];
     try {
       if (keysMatch(expectedKey, presentedApiKey(headers)) && req.method === "GET") {
         const route = matchMachinesRoute(req.path || "/");
@@ -160,6 +162,12 @@ export const machinesApi = onRequest(
         } else if (route.kind === "stand") {
           const snap = await db.collection("inventory").doc("machineStand").get();
           stand = snap.exists ? snap.data() : null;
+        } else if (route.kind === "parts") {
+          const snap = await db.collection("parts").get();
+          parts = snap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+        } else if (route.kind === "movements") {
+          const snap = await db.collection("partMovements").get();
+          movements = snap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
         }
       }
     } catch (err) {
@@ -176,6 +184,8 @@ export const machinesApi = onRequest(
       expectedKey,
       machines,
       stand,
+      parts,
+      movements,
     });
     if (result.allow) res.setHeader("Allow", result.allow);
     res.status(result.status).json(result.body);
