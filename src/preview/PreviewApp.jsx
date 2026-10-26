@@ -3,6 +3,7 @@ import Layout from "../components/Layout.jsx";
 import OrdersList from "../pages/OrdersList.jsx";
 import OrderDetail from "../pages/OrderDetail.jsx";
 import MachineDetail from "../pages/MachineDetail.jsx";
+import AuditLog from "../pages/AuditLog.jsx";
 import { ROLES, emptyResistanceRows } from "../constants.js";
 
 // Dev-only sample screens. main.jsx loads this only when import.meta.env.DEV
@@ -271,6 +272,58 @@ function machineDetail() {
   );
 }
 
+// Sample rows for the Audit Log screen. These strings match the ops write
+// shape; this file does not import the ops handler (that module needs Node crypto).
+const previewAudit = [
+  {
+    id: "audit-user",
+    userEmail: "production@example.com",
+    machineId: "m47",
+    machineNumber: "X33M047",
+    groupNumber: "G1443",
+    section: "dispatch",
+    action: "updated",
+    timestamp: stamp("2026-10-20"),
+  },
+  {
+    id: "audit-dispatch",
+    userEmail: "ops-bot",
+    machineId: "m48",
+    machineNumber: "X33M048",
+    groupNumber: "G1435",
+    section: "dispatch",
+    action:
+      "marked dispatched X33M048 group G1435: status Packed → Dispatched courier — → DP World tracking — → DP9981 link — → https://track.example/DP9981 date — → 2026-10-20",
+    timestamp: stamp("2026-10-20"),
+  },
+  {
+    id: "audit-install",
+    userEmail: "ops-bot",
+    machineId: "m48",
+    machineNumber: "X33M048",
+    groupNumber: "G1435",
+    section: "installation",
+    action:
+      "marked installed X33M048 group G1435: status Dispatched → Installed date — → 2026-10-25 installer — → Ravi notes — → Lobby install, customer present",
+    timestamp: stamp("2026-10-25"),
+  },
+  {
+    id: "audit-photo",
+    userEmail: "ops-bot",
+    machineId: "m48",
+    machineNumber: "X33M048",
+    groupNumber: "G1435",
+    section: "installation",
+    action:
+      "uploaded installation photo lobby.jpg sha256 abc123def456 on X33M048 group G1435",
+    timestamp: stamp("2026-10-25"),
+  },
+];
+
+function auditLog() {
+  return <AuditLog entries={previewAudit} />;
+}
+
 export default function PreviewApp() {
   return (
     <Layout role={ROLES.ADMIN} userEmail="production@example.com" missingCount={0}>
@@ -279,8 +332,10 @@ export default function PreviewApp() {
         <Route path="/__preview/orders/new" element={orderDetail(true)} />
         <Route path="/__preview/orders/:groupNumber" element={orderDetail()} />
         <Route path="/__preview/machine/:id" element={machineDetail()} />
+        <Route path="/__preview/audit-log" element={auditLog()} />
         {/* Same paths the real pages link to, so clicks stay inside this preview. */}
         <Route path="/orders" element={ordersList()} />
+        <Route path="/audit-log" element={auditLog()} />
         <Route path="/orders/new" element={orderDetail(true)} />
         <Route path="/orders/:groupNumber" element={orderDetail()} />
         <Route path="/machine/:id" element={machineDetail()} />

@@ -338,6 +338,17 @@ is refreshed when the computed status changes. The sheet mirror runs from
 the existing machine trigger. `updatedBy` on the machine, and
 `sectionMeta` for the section that was saved, is `ops-api`.
 
+Each successful change also appends one `auditLog` document in the same
+batch as the machine update (the same transaction, for a photo). That is
+the collection the Audit Log page reads. The row's user is `ops-bot`. It
+stores the machine number, the group number, the section, the action, and
+a server timestamp. The action includes the previous and new status, plus
+the previous and new courier, tracking number, tracking link, and date for
+dispatch; the previous and new date for installation; and the file name
+and SHA-256 for each new photo. An identical retry (`"unchanged": true` or
+`"duplicate": true`) does not add a row, and neither does a rejected call
+(`401`, `400`, `409`, `413`, or `405`).
+
 Dates are `YYYY-MM-DD`. When a date is omitted and the section does not
 already have one, it defaults to **today in IST** (`Asia/Kolkata`). Sending
 the same dispatch tracking again does not write and does not move

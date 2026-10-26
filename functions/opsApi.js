@@ -7,6 +7,7 @@ import { keysMatch, presentedApiKey } from "../src/domain/apiKey.js";
 import { groupNumberToId, normalizeGroupNumber } from "../src/domain/orderModel.js";
 import {
   OPS_ACTOR,
+  OPS_AUDIT_ACTOR,
   SERVER_TIMESTAMP,
   buildMachineUpdate,
   firebaseDownloadUrl,
@@ -81,19 +82,19 @@ async function loadContext(db, route) {
   return { machines, order };
 }
 
-async function writeAudit(db, write) {
-  try {
-    await db.collection("auditLog").add({
-      userEmail: OPS_ACTOR,
-      machineId: write.machineId || null,
-      machineNumber: write.machineNumber || null,
-      section: write.sectionStamps?.[0] || null,
-      action: write.auditAction || "updated",
-      timestamp: FieldValue.serverTimestamp(),
-    });
-  } catch (err) {
-    console.warn("Ops API audit log failed:", err?.message || err);
+function auditWrite(audit) {
+  if (!audit?.action || audit.userEmail !== OPS_AUDIT_ACTOR) {
+    throw new Error("Ops write is missing its audit log entry.");
   }
+  return {
+    userEmail: audit.userEmail,
+    machineId: audit.machineId || null,
+    machineNumber: audit.machineNumber || null,
+    groupNumber: audit.groupNumber || null,
+    section: audit.section || null,
+    action: audit.action,
+    timestamp: FieldValue.serverTimestamp(),
+  };
 }
 
 async function syncFulfillment(db, write) {
@@ -113,9 +114,13 @@ async function syncFulfillment(db, write) {
 }
 
 async function applyWrite(db, write) {
-  await db.collection("machines").doc(write.machineId).update(stampUpdate(buildMachineUpdate(write)));
+  const batch = db.batch();
+  batch.update(db.collection("machines").doc(write.machineId), stampUpdate(buildMachineUpdate(write)));
+  batch.set(db.collection("auditLog").doc(), auditWrite(write.audit));
+  await batch.commit();
+  // The order status is a follow-up. A missing order must not roll back the
+  // machine update or its audit row, which already committed together.
   await syncFulfillment(db, write);
-  await writeAudit(db, write);
 }
 
 async function commitPhoto(db, bucket, upload) {
@@ -132,6 +137,7 @@ async function commitPhoto(db, bucket, upload) {
   const url = firebaseDownloadUrl(bucket.name, upload.path, token);
   const entry = { ...upload.entry, url, path: upload.path };
   const ref = db.collection("machines").doc(upload.machineId);
+  const auditRef = db.collection("auditLog").doc();
   let outcome;
   try {
     await db.runTransaction(async (tx) => {
@@ -160,6 +166,7 @@ async function commitPhoto(db, bucket, upload) {
           })
         )
       );
+      tx.set(auditRef, auditWrite(upload.audit));
       outcome = { machine: { ...machine, installation }, entry };
     });
   } catch (err) {
@@ -227,7 +234,6 @@ export const opsApi = onRequest(
           res.status(200).json(installationPhotoBody(outcome.machine, outcome.duplicate, { duplicate: true, order }));
           return;
         }
-        await writeAudit(db, result.upload);
         res.status(201).json(installationPhotoBody(outcome.machine, outcome.entry, { duplicate: false, order }));
         return;
       }

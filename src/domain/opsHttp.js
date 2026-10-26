@@ -13,6 +13,8 @@ import { computeStatus } from "../utils/status.js";
 // own. This module never writes; functions/opsApi.js applies `write` / `upload`.
 
 export const OPS_ACTOR = "ops-api";
+// Name shown in the Audit Log user column. The machine's updatedBy stays ops-api.
+export const OPS_AUDIT_ACTOR = "ops-bot";
 export const MAX_INSTALLATION_PHOTO_BYTES = 8 * 1024 * 1024;
 export const SERVER_TIMESTAMP = Symbol("serverTimestamp");
 
@@ -210,6 +212,82 @@ function linkedGroup(machine, order) {
     if (linked && orderGroup) return orderGroup;
   }
   return machineGroup;
+}
+
+function shown(value) {
+  const trimmed = norm(value);
+  return trimmed || "—";
+}
+
+// Same fields the Audit Log page reads, plus groupNumber so the row can show
+// which order the write was for. `timestamp` is added when the batch commits.
+export function opsAuditEntry({ machineId, machineNumber, groupNumber, section, action }) {
+  return {
+    userEmail: OPS_AUDIT_ACTOR,
+    machineId: machineId || null,
+    machineNumber: machineNumber || null,
+    groupNumber: groupNumber || null,
+    section: section || null,
+    action,
+  };
+}
+
+function dispatchAudit(machine, order, prior, next, beforeStatus, afterStatus) {
+  const group = linkedGroup(machine, order);
+  const machineNumber = norm(machine.machineNumber);
+  const verb = prior?.dispatched ? "updated dispatch" : "marked dispatched";
+  const action = [
+    `${verb} ${machineNumber} group ${shown(group)}:`,
+    `status ${shown(beforeStatus)} → ${shown(afterStatus)}`,
+    `courier ${shown(prior?.courier)} → ${shown(next.courier)}`,
+    `tracking ${shown(prior?.trackingNumber)} → ${shown(next.trackingNumber)}`,
+    `link ${shown(prior?.trackingLink)} → ${shown(next.trackingLink)}`,
+    `date ${shown(prior?.date)} → ${shown(next.date)}`,
+  ].join(" ");
+  return opsAuditEntry({
+    machineId: machine.id,
+    machineNumber,
+    groupNumber: group || null,
+    section: "dispatch",
+    action,
+  });
+}
+
+function installationAudit(machine, order, prior, next, beforeStatus, afterStatus) {
+  const group = linkedGroup(machine, order);
+  const machineNumber = norm(machine.machineNumber);
+  const verb = prior?.installed ? "updated installation" : "marked installed";
+  const parts = [
+    `${verb} ${machineNumber} group ${shown(group)}:`,
+    `status ${shown(beforeStatus)} → ${shown(afterStatus)}`,
+    `date ${shown(prior?.date)} → ${shown(next.date)}`,
+  ];
+  if (norm(prior?.installedBy) !== norm(next.installedBy)) {
+    parts.push(`installer ${shown(prior?.installedBy)} → ${shown(next.installedBy)}`);
+  }
+  if (norm(prior?.notes) !== norm(next.notes)) {
+    parts.push(`notes ${shown(prior?.notes)} → ${shown(next.notes)}`);
+  }
+  return opsAuditEntry({
+    machineId: machine.id,
+    machineNumber,
+    groupNumber: group || null,
+    section: "installation",
+    action: parts.join(" "),
+  });
+}
+
+function photoAudit(machine, order, { filename, contentHash }) {
+  const group = linkedGroup(machine, order);
+  const machineNumber = norm(machine.machineNumber);
+  const action = `uploaded installation photo ${filename} sha256 ${contentHash} on ${machineNumber} group ${shown(group)}`;
+  return opsAuditEntry({
+    machineId: machine.id,
+    machineNumber,
+    groupNumber: group || null,
+    section: "installation",
+    action,
+  });
 }
 
 function machineLabel(machine, address) {
@@ -413,10 +491,10 @@ function planDispatch(machine, body, now, order) {
     groupNumber: identity.groupNumber || "",
     fields: { dispatch: nextDispatch, updatedBy: OPS_ACTOR },
     sectionStamps: ["dispatch"],
-    auditAction: prior.dispatched ? "updated dispatch" : "marked dispatched",
   };
   const projected = applyOpsWrite(machine, write, now.toISOString());
   const status = computeStatus(projected);
+  write.audit = dispatchAudit(machine, order, prior, nextDispatch, identity.status, status);
   write.fulfillmentStatus =
     status !== identity.status && FULFILLMENT_STATUSES.includes(status) ? status : null;
   return {
@@ -501,10 +579,10 @@ function planInstall(machine, body, now, order, address) {
     groupNumber: identity.groupNumber || "",
     fields: { installation: nextInstallation, updatedBy: OPS_ACTOR },
     sectionStamps: ["installation"],
-    auditAction: prior.installed ? "updated installation" : "marked installed",
   };
   const projected = applyOpsWrite(machine, write, now.toISOString());
   const status = computeStatus(projected);
+  write.audit = installationAudit(machine, order, prior, nextInstallation, identity.status, status);
   write.fulfillmentStatus =
     status !== identity.status && FULFILLMENT_STATUSES.includes(status) ? status : null;
   return {
@@ -695,7 +773,7 @@ function planPhoto(machine, body, now, order, address, maxPhotoBytes) {
       clientId,
       entry,
       sectionStamps: ["installation"],
-      auditAction: "uploaded installation photo",
+      audit: photoAudit(machine, order, { filename, contentHash }),
     },
   };
 }
