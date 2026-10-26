@@ -15,6 +15,7 @@ import {
   installationPhotoBody,
   matchOpsRoute,
   placeInstallationPhoto,
+  planAssign,
 } from "../src/domain/opsHttp.js";
 
 // This function's only secret is the ops write key. The orders secret and the
@@ -80,6 +81,28 @@ async function loadContext(db, route) {
   const byGroup = await db.collection("machines").where("groupNumber", "==", groupNumber).get();
   byGroup.docs.forEach((snap) => machines.push(docData(snap)));
   return { machines, order };
+}
+
+function dedupeDocs(docs) {
+  const out = [];
+  const seen = new Set();
+  for (const item of docs) {
+    if (!item?.id || seen.has(item.id)) continue;
+    seen.add(item.id);
+    out.push(item);
+  }
+  return out;
+}
+
+async function loadInventory(db) {
+  const [machineSnap, orderSnap] = await Promise.all([
+    db.collection("machines").get(),
+    db.collection("orders").get(),
+  ]);
+  return {
+    machines: machineSnap.docs.map(docData),
+    orders: orderSnap.docs.map(docData),
+  };
 }
 
 function auditWrite(audit) {
@@ -179,6 +202,65 @@ async function commitPhoto(db, bucket, upload) {
   return outcome || { missing: true };
 }
 
+async function commitAssign(db, assign) {
+  const orderRef = db.collection("orders").doc(assign.orderId);
+  const auditRef = db.collection("auditLog").doc();
+  let outcome = { status: 409, body: { ok: false, error: "Assignment could not be saved." } };
+  await db.runTransaction(async (tx) => {
+    const machineQuery = await tx.get(db.collection("machines").where("machineNumber", "==", assign.machineNumber));
+    const groupQuery = await tx.get(db.collection("machines").where("groupNumber", "==", assign.groupNumber));
+    const orderSnap = await tx.get(orderRef);
+    const order = orderSnap.exists ? docData(orderSnap) : null;
+    const previous = [];
+    if (order?.machineId) {
+      const prev = await tx.get(db.collection("machines").doc(order.machineId));
+      if (prev.exists) previous.push(docData(prev));
+    }
+    const orderNumberQuery = await tx.get(db.collection("orders").where("machineNumber", "==", assign.machineNumber));
+    const machines = dedupeDocs([
+      ...machineQuery.docs.map(docData),
+      ...groupQuery.docs.map(docData),
+      ...previous,
+    ]);
+    const target = machines.find((machine) => machine.machineNumber === assign.machineNumber);
+    let linkedOrders = orderNumberQuery.docs.map(docData);
+    if (target) {
+      const byId = await tx.get(db.collection("orders").where("machineId", "==", target.id));
+      linkedOrders = linkedOrders.concat(byId.docs.map(docData));
+    }
+    const orders = dedupeDocs([...(order ? [order] : []), ...linkedOrders]);
+    const planned = planAssign({
+      groupNumber: assign.groupNumber,
+      body: assign.body,
+      machines,
+      orders,
+    });
+    if (!planned.assign) {
+      outcome = { status: planned.status, body: planned.body };
+      return;
+    }
+    const plan = planned.assign;
+    tx.update(
+      db.collection("machines").doc(plan.machineId),
+      stampUpdate({ groupNumber: plan.groupNumber, updatedBy: OPS_ACTOR, updatedAt: SERVER_TIMESTAMP })
+    );
+    for (const id of plan.clearMachineIds || []) {
+      tx.update(
+        db.collection("machines").doc(id),
+        stampUpdate({ groupNumber: "", updatedBy: OPS_ACTOR, updatedAt: SERVER_TIMESTAMP })
+      );
+    }
+    if (plan.createOrder) {
+      tx.set(db.collection("orders").doc(plan.orderId), stampUpdate(plan.createOrder));
+    } else {
+      tx.update(db.collection("orders").doc(plan.orderId), stampUpdate(plan.orderUpdate));
+    }
+    tx.set(auditRef, auditWrite(plan.audit));
+    outcome = { status: planned.status, body: planned.body };
+  });
+  return outcome;
+}
+
 export const opsApi = onRequest(
   {
     secrets: [opsWriteApiKey],
@@ -199,8 +281,13 @@ export const opsApi = onRequest(
       const route = matchOpsRoute(urlPath);
       const db = getFirestore();
       let machines = [];
+      let orders = [];
       let order = null;
-      if (route.action !== "unknown") {
+      if (route.action === "machines" || route.action === "assign") {
+        const loaded = await loadInventory(db);
+        machines = loaded.machines;
+        orders = loaded.orders;
+      } else if (route.action !== "unknown") {
         const loaded = await loadContext(db, route);
         machines = loaded.machines;
         order = loaded.order;
@@ -210,12 +297,20 @@ export const opsApi = onRequest(
         method: req.method,
         urlPath,
         headers: req.headers,
+        query: req.query,
         body: jsonBody(req),
         expectedKey,
         machines,
+        orders,
         order,
       });
       if (result.allow) res.setHeader("Allow", result.allow);
+
+      if (result.assign) {
+        const committed = await commitAssign(db, result.assign);
+        res.status(committed.status).json(committed.body);
+        return;
+      }
 
       if (result.upload) {
         const outcome = await commitPhoto(db, getStorage().bucket(), result.upload);

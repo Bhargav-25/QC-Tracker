@@ -85,6 +85,7 @@ function call(overrides = {}) {
     body: { courier: "DP World", trackingNumber: "DP9981" },
     expectedKey: OPS_KEY,
     machines: [packed()],
+    orders: [],
     order: null,
     now: NOW,
     ...overrides,
@@ -117,13 +118,23 @@ describe("ops function source", () => {
     const syncAt = apply.indexOf("await syncFulfillment");
     assert.ok(commitAt > 0 && syncAt > commitAt);
 
-    const photo = ops.slice(ops.indexOf("async function commitPhoto"), ops.indexOf("export const opsApi"));
+    const photo = ops.slice(ops.indexOf("async function commitPhoto"), ops.indexOf("async function commitAssign"));
     const auditRefAt = photo.indexOf('const auditRef = db.collection("auditLog").doc()');
     const txAt = photo.indexOf("await db.runTransaction");
     const updateAt = photo.indexOf("tx.update(");
     const setAt = photo.indexOf("tx.set(auditRef, auditWrite(upload.audit))");
     assert.ok(auditRefAt > 0 && auditRefAt < txAt && updateAt > txAt && setAt > updateAt);
     assert.equal(photo.slice(0, setAt).includes("tx.set(auditRef"), false);
+
+    const assign = ops.slice(ops.indexOf("async function commitAssign"), ops.indexOf("export const opsApi"));
+    const assignTx = assign.indexOf("await db.runTransaction");
+    const replan = assign.indexOf("planAssign(");
+    const machineUpdate = assign.indexOf('tx.update(\n      db.collection("machines")');
+    const orderSet = assign.indexOf('tx.set(db.collection("orders")');
+    const orderUpdate = assign.indexOf('tx.update(db.collection("orders")');
+    const auditSet = assign.indexOf("tx.set(auditRef, auditWrite(plan.audit))");
+    assert.ok(assignTx > 0 && replan > assignTx && machineUpdate > replan);
+    assert.ok(orderSet > machineUpdate && orderUpdate > orderSet && auditSet > orderUpdate);
   });
 });
 
@@ -592,5 +603,251 @@ describe("ops api installation photos", () => {
     assert.equal(result.status, 201);
     assert.equal(result.upload.audit.groupNumber, "G1435");
     assert.match(result.upload.audit.action, /on X34M005 group G1435$/);
+  });
+});
+
+describe("ops api machine list and assignment", () => {
+  function at(iso) {
+    return { updatedAt: iso, updatedBy: "production@example.com" };
+  }
+
+  it("lists machines oldest packed first and leaves out everything else", () => {
+    const older = packed({
+      id: "m-old",
+      machineNumber: "X33M001",
+      groupNumber: "",
+      sectionMeta: { finalPacking: at("2026-09-01T00:00:00.000Z") },
+    });
+    const newer = packed({
+      id: "m-new",
+      machineNumber: "X34M005",
+      groupNumber: "",
+      cycles: [{ cycle: 1 }],
+      sectionMeta: { finalPacking: at("2026-10-01T00:00:00.000Z") },
+    });
+    const dispatched = packed({
+      id: "m-out",
+      machineNumber: "X35M002",
+      groupNumber: "G9",
+      dispatch: { dispatched: true, date: "2026-10-02" },
+      sectionMeta: { finalPacking: at("2026-08-01T00:00:00.000Z"), dispatch: at("2026-10-02T00:00:00.000Z") },
+    });
+    const machines = [newer, dispatched, older];
+    const orders = [{ id: "G1435", groupNumber: "G1435", machineId: "m-old", machineNumber: "X33M001" }];
+    const listed = call({
+      method: "GET",
+      urlPath: "/v1/machines",
+      query: { status: "Packed" },
+      machines,
+      orders,
+    });
+    assert.equal(listed.status, 200);
+    assert.equal(listed.body.count, 2);
+    assert.equal(listed.write, undefined);
+    assert.equal(listed.assign, undefined);
+    assert.deepEqual(listed.body.machines, [
+      {
+        machineNumber: "X33M001",
+        status: STATUS.PACKED,
+        packedAt: "2026-09-01T00:00:00.000Z",
+        refurbished: false,
+        groupNumber: "G1435",
+        batch: 33,
+      },
+      {
+        machineNumber: "X34M005",
+        status: STATUS.PACKED,
+        packedAt: "2026-10-01T00:00:00.000Z",
+        refurbished: true,
+        groupNumber: null,
+        batch: 34,
+      },
+    ]);
+    assert.equal(JSON.stringify(listed.body).includes(SECRET), false);
+
+    const both = call({
+      method: "GET",
+      urlPath: "/opsApi/v1/machines",
+      query: { status: ["Packed", "Dispatched"] },
+      machines,
+      orders,
+    });
+    assert.deepEqual(both.body.machines.map((machine) => machine.machineNumber), ["X35M002", "X33M001", "X34M005"]);
+
+    const comma = call({
+      method: "GET",
+      urlPath: "/v1/machines",
+      query: { status: "packed,Dispatched", limit: "1" },
+      machines,
+      orders,
+    });
+    assert.equal(comma.body.count, 1);
+    assert.equal(comma.body.machines[0].machineNumber, "X35M002");
+    assert.equal(comma.body.machines[0].packedAt, "2026-08-01T00:00:00.000Z");
+
+    assert.equal(call({ method: "GET", urlPath: "/v1/machines", query: { status: "Returned" }, machines }).status, 400);
+    assert.equal(call({ method: "GET", urlPath: "/v1/machines", query: { limit: "0" }, machines }).status, 400);
+    const denied = call({ method: "GET", urlPath: "/v1/machines", headers: headers(ORDERS_KEY), machines });
+    assert.equal(denied.status, 401);
+    assert.equal(JSON.stringify(denied.body).includes("X34M005"), false);
+    assert.equal(call({ method: "POST", urlPath: "/v1/machines", machines }).status, 405);
+  });
+
+  it("assigns a packed machine the way the order page does, and logs ops-bot once", () => {
+    const machine = packed({ groupNumber: "", cycles: [{ cycle: 1 }] });
+    const order = { id: "G1435", groupNumber: "G1435", machineId: "", machineNumber: "", customer: "Dr Shouvick", contact: SECRET };
+    const result = call({
+      method: "POST",
+      urlPath: "/v1/groups/G1435/assign",
+      body: { machineNumber: "X34M005", reason: "auto", note: "oldest packed" },
+      machines: [machine],
+      orders: [order],
+    });
+    assert.equal(result.status, 200);
+    assert.equal(result.body.unchanged, false);
+    assert.equal(result.body.createdOrder, false);
+    assert.equal(result.body.refurbished, true);
+    assert.equal(result.body.status, STATUS.PACKED);
+    assert.equal(result.assign.createOrder, null);
+    assert.equal(result.assign.orderId, "G1435");
+    assert.deepEqual(result.assign.clearMachineIds, []);
+    assert.equal(result.assign.orderUpdate.machineId, "m1");
+    assert.equal(result.assign.orderUpdate.machineNumber, "X34M005");
+    assert.equal(result.assign.orderUpdate.fulfillmentStatus, STATUS.PACKED);
+    assert.equal(result.assign.orderUpdate.updatedBy, OPS_ACTOR);
+    assert.equal(result.assign.orderUpdate.customer, undefined);
+    assert.equal(result.assign.audit.userEmail, "ops-bot");
+    assert.equal(result.assign.audit.section, "order");
+    assert.match(result.assign.audit.action, /^assign machine X34M005 group G1435 /);
+    assert.match(result.assign.audit.action, /reason auto/);
+    assert.match(result.assign.audit.action, /machine — → X34M005/);
+    assert.match(result.assign.audit.action, /group — → G1435/);
+    assert.match(result.assign.audit.action, /note oldest packed/);
+    assert.equal(JSON.stringify(result.assign).includes(SECRET), false);
+
+    const linkedMachine = { ...machine, groupNumber: "G1435" };
+    const linkedOrder = {
+      ...order,
+      machineId: "m1",
+      machineNumber: "X34M005",
+      fulfillmentStatus: STATUS.PACKED,
+    };
+    const again = call({
+      method: "POST",
+      urlPath: "/v1/groups/G1435/assign",
+      body: { machineNumber: "X34M005", reason: "auto" },
+      machines: [linkedMachine],
+      orders: [linkedOrder],
+    });
+    assert.equal(again.body.unchanged, true);
+    assert.equal(again.assign, undefined);
+
+    const lookup = call({
+      method: "GET",
+      urlPath: "/v1/groups/G1435",
+      machines: [linkedMachine],
+      order: linkedOrder,
+    });
+    assert.equal(lookup.status, 200);
+    assert.equal(lookup.body.machineNumber, "X34M005");
+    assert.equal(lookup.body.machineId, "m1");
+    assert.equal(lookup.body.groupNumber, "G1435");
+    assert.equal(lookup.body.status, STATUS.PACKED);
+  });
+
+  it("creates a missing order, rejects conflicts, and replaces a link only with force", () => {
+    const machine = packed({ groupNumber: "" });
+    const created = call({
+      method: "POST",
+      urlPath: "/v1/groups/G1500/assign",
+      body: { machineNumber: "X34M005", reason: "reserved", customer: "New clinic", city: "Pune" },
+      machines: [machine],
+      orders: [],
+    });
+    assert.equal(created.status, 200);
+    assert.equal(created.body.createdOrder, true);
+    assert.equal(created.assign.orderUpdate, null);
+    assert.equal(created.assign.createOrder.groupNumber, "G1500");
+    assert.equal(created.assign.createOrder.customer, "New clinic");
+    assert.equal(created.assign.createOrder.city, "Pune");
+    assert.equal(created.assign.createOrder.status, "Please Ship");
+    assert.equal(created.assign.createOrder.payment, "Paid");
+    assert.equal(created.assign.createOrder.machineId, "m1");
+    assert.equal(created.assign.createOrder.machineNumber, "X34M005");
+    assert.equal(created.assign.createOrder.contact, "");
+    assert.equal(created.assign.createOrder.address, "");
+    assert.equal(created.assign.createOrder.createdBy, OPS_ACTOR);
+    assert.match(created.assign.audit.action, /reason reserved/);
+    assert.match(created.assign.audit.action, /created order/);
+
+    const testing = packed({
+      groupNumber: "",
+      finalPacking: { ...packed().finalPacking, finalPacked: null },
+    });
+    const notPacked = call({
+      method: "POST",
+      urlPath: "/v1/groups/G1435/assign",
+      body: { machineNumber: "X34M005" },
+      machines: [testing],
+      orders: [{ id: "G1435", groupNumber: "G1435" }],
+    });
+    assert.equal(notPacked.status, 409);
+    assert.match(notPacked.body.error, /Only a Packed machine/);
+    assert.equal(notPacked.assign, undefined);
+
+    const taken = call({
+      method: "POST",
+      urlPath: "/v1/groups/G1435/assign",
+      body: { machineNumber: "X34M005", force: true },
+      machines: [packed({ groupNumber: "G9999" })],
+      orders: [{ id: "G1435", groupNumber: "G1435" }],
+    });
+    assert.equal(taken.status, 409);
+    assert.match(taken.body.error, /already assigned to G9999/);
+    assert.equal(taken.assign, undefined);
+
+    const other = packed({ id: "m-old", machineNumber: "X33M001", groupNumber: "G1435" });
+    const blocked = call({
+      method: "POST",
+      urlPath: "/v1/groups/G1435/assign",
+      body: { machineNumber: "X34M005" },
+      machines: [machine, other],
+      orders: [{ id: "G1435", groupNumber: "G1435", machineId: "m-old", machineNumber: "X33M001" }],
+    });
+    assert.equal(blocked.status, 409);
+    assert.match(blocked.body.error, /already assigned to X33M001/);
+    assert.match(blocked.body.error, /force:true/);
+
+    const forced = call({
+      method: "POST",
+      urlPath: "/v1/groups/G1435/assign",
+      body: { machineNumber: "X34M005", force: true, reason: "auto" },
+      machines: [machine, other],
+      orders: [{ id: "G1435", groupNumber: "G1435", machineId: "m-old", machineNumber: "X33M001" }],
+    });
+    assert.equal(forced.status, 200);
+    assert.deepEqual(forced.assign.clearMachineIds, ["m-old"]);
+    assert.match(forced.assign.audit.action, /machine X33M001 → X34M005/);
+    assert.equal(forced.assign.orderUpdate.machineId, "m1");
+
+    assert.equal(
+      call({
+        method: "POST",
+        urlPath: "/v1/groups/G1435/assign",
+        body: { machineNumber: "NOPE" },
+        machines: [machine],
+        orders: [],
+      }).status,
+      404
+    );
+    assert.equal(
+      call({
+        method: "POST",
+        urlPath: "/v1/groups/G1435/assign",
+        body: { machineNumber: "X34M005", reason: "manual" },
+        machines: [machine],
+      }).status,
+      400
+    );
   });
 });

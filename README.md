@@ -381,6 +381,8 @@ a group number (`G338%2F9`).
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/v1/groups/<groupNumber>` | Machine number and current status. |
+| GET | `/v1/machines` | Packed (or other status) machines, oldest packed first. |
+| POST | `/v1/groups/<groupNumber>/assign` | Link a Packed machine to that group. |
 | POST | `/v1/machines/<machineNumber>/dispatch` | Mark dispatched. |
 | POST | `/v1/groups/<groupNumber>/dispatch` | Same, by group number. |
 | POST | `/v1/machines/<machineNumber>/installation` | Mark installed. |
@@ -403,7 +405,49 @@ the previous and new courier, tracking number, tracking link, and date for
 dispatch; the previous and new date for installation; and the file name
 and SHA-256 for each new photo. An identical retry (`"unchanged": true` or
 `"duplicate": true`) does not add a row, and neither does a rejected call
-(`401`, `400`, `409`, `413`, or `405`).
+(`401`, `400`, `409`, `413`, or `405`). Assignment is included: the
+machine link and its `ops-bot` audit row commit in one transaction.
+
+List machines. Read-only, same key. `status` is optional and matches the
+computed status exactly (repeat it, or separate several with commas).
+`limit` defaults to 200 and is capped at 500. Each row is the machine
+number, status, `packedAt` (when final packing was saved, otherwise the
+latest section change), `refurbished` (true when the machine has an earlier
+cycle, the same rule as a returned-and-refurbished machine), the linked
+group number, and the batch parsed from the machine number (`X34M005` is
+batch 34). Oldest `packedAt` comes first. Nothing else is returned.
+
+```
+GET /v1/machines?status=Packed&limit=50
+X-API-Key: $OPS_WRITE_API_KEY
+```
+
+Assign a machine to a group. This writes the same link as the order page:
+`machine.groupNumber`, and the order's `machineId`, `machineNumber`, and
+`fulfillmentStatus`. The machine must exist and be Packed. A refurbished
+machine is allowed once it is Packed again. A machine already linked to a
+different group is `409`. If this group is already linked to a different
+machine, that is also `409` unless the body sets `"force": true`, which
+clears the previous machine's group and moves the link. Sending the same
+group and machine again returns `"unchanged": true` and does not add an
+audit row. `reason` is `auto` or `reserved`. `note` is optional.
+
+If the group has no order yet, the call creates one minimal order the same
+way `POST /v1/orders` does: `Please Ship`, `Paid`, and the optional
+`customer` and `city`. It does not overwrite an order that already exists.
+The audit action starts with `assign machine` and includes the machine
+number, the group number, the reason, and the previous and new machine and
+group. Rejected calls do not write a row.
+
+```
+POST /v1/groups/G1435/assign
+X-API-Key: $OPS_WRITE_API_KEY
+Content-Type: application/json
+
+{ "machineNumber": "X34M005", "reason": "auto" }
+```
+
+After that, `GET /v1/groups/G1435` returns that machine number.
 
 Dates are `YYYY-MM-DD`. When a date is omitted and the section does not
 already have one, it defaults to **today in IST** (`Asia/Kolkata`). Sending
