@@ -7,6 +7,7 @@ import { keysMatch } from "../src/domain/apiKey.js";
 import {
   MAX_INSTALLATION_PHOTO_BYTES,
   OPS_ACTOR,
+  OPS_AUDIT_ACTOR,
   SERVER_TIMESTAMP,
   applyOpsWrite,
   buildMachineUpdate,
@@ -100,6 +101,29 @@ describe("ops function source", () => {
     assert.match(ops, /secrets:\s*\[opsWriteApiKey\]/);
     assert.equal(ops.includes("ordersApiKey"), false);
     assert.equal(ops.includes("machinesReadApiKey"), false);
+  });
+
+  it("writes the audit log in the same batch or transaction as the machine change", () => {
+    assert.match(ops, /audit\.userEmail !== OPS_AUDIT_ACTOR/);
+    assert.match(ops, /timestamp: FieldValue\.serverTimestamp\(\)/);
+    assert.equal(ops.includes("async function writeAudit"), false);
+    assert.equal(ops.includes("console.warn"), true);
+
+    const apply = ops.slice(ops.indexOf("async function applyWrite"), ops.indexOf("async function commitPhoto"));
+    assert.match(apply, /const batch = db\.batch\(\)/);
+    assert.match(apply, /batch\.update\(db\.collection\("machines"\)/);
+    assert.match(apply, /batch\.set\(db\.collection\("auditLog"\)\.doc\(\), auditWrite\(write\.audit\)\)/);
+    const commitAt = apply.indexOf("await batch.commit()");
+    const syncAt = apply.indexOf("await syncFulfillment");
+    assert.ok(commitAt > 0 && syncAt > commitAt);
+
+    const photo = ops.slice(ops.indexOf("async function commitPhoto"), ops.indexOf("export const opsApi"));
+    const auditRefAt = photo.indexOf('const auditRef = db.collection("auditLog").doc()');
+    const txAt = photo.indexOf("await db.runTransaction");
+    const updateAt = photo.indexOf("tx.update(");
+    const setAt = photo.indexOf("tx.set(auditRef, auditWrite(upload.audit))");
+    assert.ok(auditRefAt > 0 && auditRefAt < txAt && updateAt > txAt && setAt > updateAt);
+    assert.equal(photo.slice(0, setAt).includes("tx.set(auditRef"), false);
   });
 });
 
@@ -216,7 +240,17 @@ describe("ops api dispatch", () => {
     assert.equal(result.write.sectionStamps.length, 1);
     assert.equal(result.write.sectionStamps[0], "dispatch");
     assert.equal(result.write.fulfillmentStatus, STATUS.DISPATCHED);
-    assert.equal(result.write.auditAction, "marked dispatched");
+    assert.equal(OPS_AUDIT_ACTOR, "ops-bot");
+    assert.deepEqual(result.write.audit, {
+      userEmail: "ops-bot",
+      machineId: "m1",
+      machineNumber: "X34M005",
+      groupNumber: "G1435",
+      section: "dispatch",
+      action:
+        "marked dispatched X34M005 group G1435: status Packed → Dispatched courier — → DP World tracking — → DP9981 link — → https://track.example/DP9981 date — → 2026-10-26",
+    });
+    assert.equal(Object.hasOwn(result.write.audit, "timestamp"), false);
 
     const dispatch = result.write.fields.dispatch;
     assert.equal(dispatch.dispatched, true);
@@ -269,6 +303,7 @@ describe("ops api dispatch", () => {
     assert.equal(second.status, 200);
     assert.equal(second.body.unchanged, true);
     assert.equal(second.write, undefined);
+    assert.equal(second.upload, undefined);
     assert.equal(second.body.dispatch.date, "2026-10-26");
     assert.equal(second.body.status, STATUS.DISPATCHED);
 
@@ -280,7 +315,14 @@ describe("ops api dispatch", () => {
     assert.equal(changed.write.fields.dispatch.trackingNumber, "NEW-1");
     assert.equal(changed.write.fields.dispatch.comment, "keep-me");
     assert.equal(changed.write.fields.dispatch.includeStand, true);
-    assert.equal(changed.write.auditAction, "updated dispatch");
+    assert.equal(changed.write.audit.userEmail, "ops-bot");
+    assert.equal(changed.write.audit.groupNumber, "G1435");
+    assert.match(changed.write.audit.action, /^updated dispatch X34M005 group G1435: /);
+    assert.match(changed.write.audit.action, /status Dispatched → Dispatched/);
+    assert.match(changed.write.audit.action, /courier DP World → DP World/);
+    assert.match(changed.write.audit.action, /tracking DP9981 → NEW-1/);
+    assert.match(changed.write.audit.action, /link — → —/);
+    assert.match(changed.write.audit.action, /date 2026-10-26 → 2026-10-26/);
     assert.equal(changed.write.fulfillmentStatus, null);
     assert.equal(Object.keys(changed.write.fields).sort().join(), "dispatch,updatedBy");
   });
@@ -292,6 +334,7 @@ describe("ops api dispatch", () => {
     const extra = call({ body: { courier: "DP World", trackingNumber: "1", resistance: [] } });
     assert.equal(extra.status, 400);
     assert.equal(extra.write, undefined);
+    assert.equal(extra.upload, undefined);
     assert.match(extra.body.error, /courier, trackingNumber, trackingLink, and date/);
     const badDate = call({ body: { courier: "DP World", trackingNumber: "1", date: "26-10-2026" } });
     assert.equal(badDate.status, 400);
@@ -323,12 +366,14 @@ describe("ops api installation", () => {
     assert.match(blocked.body.error, /Packed/);
     assert.match(blocked.body.error, /X34M005/);
     assert.equal(blocked.write, undefined);
+    assert.equal(blocked.upload, undefined);
 
     const photos = call({
       urlPath: "/v1/machines/X34M005/installation/photos",
       body: { data: JPEG.toString("base64"), contentType: "image/jpeg" },
     });
     assert.equal(photos.status, 409);
+    assert.equal(photos.write, undefined);
     assert.equal(photos.upload, undefined);
   });
 
@@ -353,7 +398,16 @@ describe("ops api installation", () => {
     assert.equal(result.write.fields.dispatch, undefined);
     assert.equal(result.write.sectionStamps[0], "installation");
     assert.equal(result.write.fulfillmentStatus, STATUS.INSTALLED);
-    assert.equal(result.write.auditAction, "marked installed");
+    assert.equal(result.write.audit.userEmail, "ops-bot");
+    assert.equal(result.write.audit.machineNumber, "X34M005");
+    assert.equal(result.write.audit.groupNumber, "G1435");
+    assert.equal(result.write.audit.section, "installation");
+    assert.match(
+      result.write.audit.action,
+      /^marked installed X34M005 group G1435: status Dispatched → Installed date — → 2026-10-26 /
+    );
+    assert.match(result.write.audit.action, /installer — → Ravi/);
+    assert.match(result.write.audit.action, /notes — → Lobby install\ncustomer present/);
 
     const projected = applyOpsWrite(machine, result.write, NOW.toISOString());
     assert.equal(computeStatus(projected), STATUS.INSTALLED);
@@ -370,6 +424,17 @@ describe("ops api installation", () => {
     assert.equal(again.body.unchanged, true);
     assert.equal(again.write, undefined);
     assert.equal(again.body.installation.date, "2026-10-26");
+
+    const moved = call({
+      urlPath: "/v1/machines/X34M005/installation",
+      machines: [projected],
+      body: { date: "2026-10-27", installer: "Ravi", notes: "Lobby install\ncustomer present" },
+    });
+    assert.match(moved.write.audit.action, /^updated installation X34M005 group G1435: /);
+    assert.match(moved.write.audit.action, /status Installed → Installed/);
+    assert.match(moved.write.audit.action, /date 2026-10-26 → 2026-10-27/);
+    assert.equal(moved.write.audit.action.includes("installer"), false);
+    assert.equal(moved.write.audit.action.includes("notes"), false);
   });
 
   it("allows installation after delivery when dispatch was not flagged", () => {
@@ -384,6 +449,9 @@ describe("ops api installation", () => {
     assert.equal(result.status, 200);
     assert.equal(result.body.installation.date, "2026-10-25");
     assert.equal(result.body.status, STATUS.INSTALLED);
+    assert.match(result.write.audit.action, /status Delivered → Installed/);
+    assert.match(result.write.audit.action, /date — → 2026-10-25/);
+    assert.equal(result.write.audit.userEmail, "ops-bot");
   });
 });
 
@@ -420,7 +488,15 @@ describe("ops api installation photos", () => {
     );
     assert.match(result.upload.path, /^machines\/m1\/installation\/\d+-My_Photo\.jpg$/);
     assert.deepEqual(result.upload.sectionStamps, ["installation"]);
-    assert.equal(result.upload.auditAction, "uploaded installation photo");
+    assert.equal(result.upload.audit.userEmail, "ops-bot");
+    assert.equal(result.upload.audit.machineId, "m1");
+    assert.equal(result.upload.audit.machineNumber, "X34M005");
+    assert.equal(result.upload.audit.groupNumber, "G1435");
+    assert.equal(result.upload.audit.section, "installation");
+    assert.equal(
+      result.upload.audit.action,
+      `uploaded installation photo My_Photo.jpg sha256 ${result.upload.contentHash} on X34M005 group G1435`
+    );
 
     const placed = placeInstallationPhoto(machine, result.upload.entry);
     assert.equal(placed.photos[1], result.upload.entry);
@@ -447,6 +523,7 @@ describe("ops api installation photos", () => {
     assert.equal(byHash.body.duplicate, true);
     assert.equal(byHash.body.photo.path, existing.path);
     assert.equal(byHash.upload, undefined);
+    assert.equal(byHash.write, undefined);
 
     const other = Buffer.concat([JPEG, Buffer.from([9])]);
     const byId = call({
@@ -467,6 +544,7 @@ describe("ops api installation photos", () => {
       body: { data: PNG.toString("base64"), contentType: "image/jpeg" },
     });
     assert.equal(wrongType.status, 400);
+    assert.equal(wrongType.upload, undefined);
     assert.match(wrongType.body.error, /does not match/);
 
     const textFile = call({
@@ -491,6 +569,7 @@ describe("ops api installation photos", () => {
       body: { data: JPEG.toString("base64"), contentType: "image/jpeg" },
     });
     assert.equal(huge.status, 413);
+    assert.equal(huge.upload, undefined);
 
     const fullPhotos = [0, 1, 2, 3].map((index) => ({ url: SECRET, path: `p${index}`, contentHash: `h${index}` }));
     const full = call({
@@ -499,6 +578,19 @@ describe("ops api installation photos", () => {
       body: { data: JPEG.toString("base64") },
     });
     assert.equal(full.status, 409);
+    assert.equal(full.upload, undefined);
     assert.match(full.body.error, /4 installation photos/);
+  });
+
+  it("names the group from the order link when the machine has none", () => {
+    const result = call({
+      urlPath: "/v1/groups/G1435/installation/photos",
+      machines: [packed({ groupNumber: "", dispatch: { dispatched: true, date: "2026-10-20", courier: "DP World", trackingNumber: "1" } })],
+      order: { id: "G1435", groupNumber: "G1435", machineId: "m1", machineNumber: "X34M005" },
+      body: { data: JPEG.toString("base64"), contentType: "image/jpeg", filename: "lobby.jpg" },
+    });
+    assert.equal(result.status, 201);
+    assert.equal(result.upload.audit.groupNumber, "G1435");
+    assert.match(result.upload.audit.action, /on X34M005 group G1435$/);
   });
 });
