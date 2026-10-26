@@ -12,6 +12,7 @@ export default function DispatchTab({ machine, standCount, currentUserEmail }) {
   const [includeStand, setIncludeStand] = useState(dispatch.includeStand || false);
   const [courier, setCourier] = useState(dispatch.courier || "");
   const [trackingNumber, setTrackingNumber] = useState(dispatch.trackingNumber || "");
+  const [trackingLink, setTrackingLink] = useState(dispatch.trackingLink || "");
   const [accessoriesSeparate, setAccessoriesSeparate] = useState(Boolean(dispatch.accessoriesSeparate));
   const [accessoriesCourier, setAccessoriesCourier] = useState(dispatch.accessoriesCourier || "");
   const [accessoriesTracking, setAccessoriesTracking] = useState(dispatch.accessoriesTracking || "");
@@ -54,6 +55,7 @@ export default function DispatchTab({ machine, standCount, currentUserEmail }) {
             includeStand,
             courier,
             trackingNumber,
+            trackingLink,
             accessoriesSeparate,
             accessoriesCourier,
             accessoriesTracking,
@@ -113,6 +115,11 @@ export default function DispatchTab({ machine, standCount, currentUserEmail }) {
             </button>
           ))}
         </div>
+        {courier && !COURIERS.includes(courier) ? (
+          <div className="helper-text" style={{ marginTop: 8 }}>
+            Saved courier: <strong>{courier}</strong>
+          </div>
+        ) : null}
       </div>
 
       <div className="field">
@@ -123,6 +130,23 @@ export default function DispatchTab({ machine, standCount, currentUserEmail }) {
           onChange={(e) => setTrackingNumber(e.target.value)}
           placeholder="Tracking number"
         />
+      </div>
+
+      <div className="field">
+        <label>Tracking link</label>
+        <input
+          type="url"
+          value={trackingLink}
+          onChange={(e) => setTrackingLink(e.target.value)}
+          placeholder="https://"
+        />
+        {/^https?:\/\//i.test(trackingLink) ? (
+          <div className="helper-text" style={{ marginTop: 6 }}>
+            <a className="link" href={trackingLink} target="_blank" rel="noreferrer">
+              Open tracking link
+            </a>
+          </div>
+        ) : null}
       </div>
 
       <div className="field">

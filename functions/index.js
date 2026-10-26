@@ -211,3 +211,7 @@ export const syncMachineToSheet = onDocumentWritten(
     await syncGroups(groups);
   }
 );
+
+// Dispatch / installation writes. Separate function and secret from `api`
+// and `machinesApi`, so those handlers can change without editing this one.
+export { opsApi } from "./opsApi.js";

@@ -296,6 +296,164 @@ GET /v1/orders/G1458
 `status` must be Pause Shipment, Please Ship, or Cancelled. `payment` must
 be Paid, Advance, COD, or Cancelled. Dates are `YYYY-MM-DD`.
 
+### Ops write API (dispatch and installation)
+
+A third HTTPS function, `opsApi`, updates a machine after it leaves the
+factory. It has its own secret, `OPS_WRITE_API_KEY`. The orders key and the
+machines read key are not accepted. This function does not receive those
+secrets, and the handler compares the presented key only with
+`OPS_WRITE_API_KEY` (the same constant-time `X-API-Key` / `Authorization:
+Bearer` check as the other APIs).
+
+```
+X-API-Key: <OPS_WRITE_API_KEY>
+```
+
+The base URL is printed at deploy (`Function URL (opsApi)`):
+
+```
+https://<region>-<project-id>.cloudfunctions.net/opsApi
+```
+
+A `/v1` prefix is optional. A machine is addressed by its machine number
+(`X34M005`) or by a group number (`G1435`). A group number is resolved from
+the order's machine link first (`machineId`, then `machineNumber`), then
+from `machine.groupNumber`. If more than one machine shares the group and
+the order does not point at one of them, the call is `409`. Encode a `/` in
+a group number (`G338%2F9`).
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/v1/groups/<groupNumber>` | Machine number and current status. |
+| POST | `/v1/machines/<machineNumber>/dispatch` | Mark dispatched. |
+| POST | `/v1/groups/<groupNumber>/dispatch` | Same, by group number. |
+| POST | `/v1/machines/<machineNumber>/installation` | Mark installed. |
+| POST | `/v1/groups/<groupNumber>/installation` | Same, by group number. |
+| POST | `/v1/machines/<machineNumber>/installation/photos` | Add one installation photo. |
+| POST | `/v1/groups/<groupNumber>/installation/photos` | Same, by group number. |
+
+Every other method is `405`. There is no delete, and no way to edit
+assembly, QC, packing, or delivery. A linked order's `fulfillmentStatus`
+is refreshed when the computed status changes. The sheet mirror runs from
+the existing machine trigger. `updatedBy` on the machine, and
+`sectionMeta` for the section that was saved, is `ops-api`.
+
+Dates are `YYYY-MM-DD`. When a date is omitted and the section does not
+already have one, it defaults to **today in IST** (`Asia/Kolkata`). Sending
+the same dispatch tracking again does not write and does not move
+`sectionMeta.dispatch.updatedAt` (that timestamp is what the app treats as
+when the machine became Dispatched). The same rule applies to installation.
+
+Mark dispatched. `courier` is free text (`DP World`, `Delhivery`,
+`Allcargo`, …). `shipper` is an alias. Send a tracking number, an
+`http`/`https` tracking link, or both. `trackingUrl` is an alias for
+`trackingLink`. The call sets `dispatch.dispatched`, the date, the courier,
+and the tracking fields, and leaves stand, accessories, and the comment as
+they were. A link with no number is also stored in the tracking-number
+field so the Dispatch tab and the sheet still show it.
+
+```
+POST /v1/groups/G1435/dispatch
+X-API-Key: $OPS_WRITE_API_KEY
+Content-Type: application/json
+
+{
+  "courier": "DP World",
+  "trackingNumber": "DP9981",
+  "trackingLink": "https://track.example/DP9981"
+}
+```
+
+```
+200
+{
+  "ok": true,
+  "unchanged": false,
+  "machineNumber": "X34M005",
+  "machineId": "m1",
+  "groupNumber": "G1435",
+  "status": "Dispatched",
+  "updatedBy": "ops-api",
+  "dispatch": {
+    "dispatched": true,
+    "date": "2026-10-26",
+    "courier": "DP World",
+    "trackingNumber": "DP9981",
+    "trackingLink": "https://track.example/DP9981"
+  }
+}
+```
+
+The same body again returns `"unchanged": true` and does not write.
+
+Mark installed. The machine must already be dispatched or delivered, otherwise
+the response is `409` and names the current status. `notes` and `installer`
+are optional. `installer` is stored as `installation.installedBy` (the
+Installation tab shows it). `notes` is stored on `installation.notes` and
+shown on that tab. Photos and video already on the machine are kept.
+
+```
+POST /v1/machines/X34M005/installation
+X-API-Key: $OPS_WRITE_API_KEY
+Content-Type: application/json
+
+{ "date": "2026-10-26", "installer": "Ravi", "notes": "Lobby install" }
+```
+
+Installation photos are **one image per request**, JSON, not multipart.
+Cloud Functions parses a JSON body directly, and one base64 image stays
+inside the request size limit. Fields: `filename`, `contentType`, `data`
+(raw base64 or a `data:image/...;base64,...` URL), and optional `id` (a
+retry key). JPEG, PNG, WebP, or GIF, at most **8 MB** decoded. The type is
+taken from the file bytes. The file is stored at
+`machines/<machineId>/installation/<timestamp>-<filename>`, the same prefix
+the app uses, and appended into the first empty slot of
+`installation.photos` (the tab shows four). A repeat of the same bytes
+(SHA-256) or the same `id` returns the existing photo with `"duplicate": true`
+and does not add a second row. A fifth photo is `409`.
+
+```
+POST /v1/machines/X34M005/installation/photos
+X-API-Key: $OPS_WRITE_API_KEY
+Content-Type: application/json
+
+{
+  "filename": "lobby.jpg",
+  "contentType": "image/jpeg",
+  "id": "job-42",
+  "data": "<base64>"
+}
+```
+
+`201` is a new photo. `200` with `"duplicate": true` is a retry. The
+response includes `photo.url`, `photo.path`, `photo.contentHash`, and
+`photo.clientId`.
+
+Lookup:
+
+```
+GET /v1/groups/G1435
+X-API-Key: $OPS_WRITE_API_KEY
+```
+
+```
+200
+{ "ok": true, "groupNumber": "G1435", "machineNumber": "X34M005", "machineId": "m1", "status": "Packed" }
+```
+
+No Firestore or Storage rules change is required. The function uses the
+Admin SDK, which bypasses the client rules. The app's signed-in users still
+read and write `machines/{machineId}/...` in Storage the same way as before.
+
+Generate a key that is different from the other two, store it only as a
+secret, and deploy this function:
+
+```
+openssl rand -hex 32
+firebase functions:secrets:set OPS_WRITE_API_KEY
+firebase deploy --only functions:opsApi
+```
+
 ### Machines API (inventory bot)
 
 A second HTTPS function, `machinesApi`, is read-only. It uses its own secret,
@@ -524,7 +682,9 @@ rules, and does not write to the live project.
 5. **Machines read API key.** Generate a different key and store it as its
    own secret. The orders key will not authorize these reads.
    `openssl rand -hex 32`, then
-   `firebase functions:secrets:set MACHINES_READ_API_KEY`.
+   `firebase functions:secrets:set MACHINES_READ_API_KEY`. The ops write key
+   is a third secret. In **Ops write API**, run
+   `firebase functions:secrets:set OPS_WRITE_API_KEY`.
 6. **Sheets service account.** In Google Cloud (same project, or any project
    you control): APIs & Services → enable **Google Sheets API**. IAM →
    create a service account. Create a JSON key. Share the orders spreadsheet
@@ -535,9 +695,11 @@ rules, and does not write to the live project.
 7. **Deploy functions.** `npm install` inside `functions/`, then
    `firebase deploy --only functions`. The predeploy hook bundles
    `functions/lib` (the directory Cloud Functions actually uploads). Note
-   both URLs from the deploy output: `api` for the sales bot and
-   `machinesApi` for the inventory bot. If a function rejects anonymous
-   callers, the deploy used a private invoker: both are declared
+   the URLs from the deploy output: `api` for the sales bot, `machinesApi`
+   for the inventory bot, and `opsApi` for dispatch and installation writes.
+   To deploy only the ops function after its secret exists:
+   `firebase deploy --only functions:opsApi`. If a function rejects anonymous
+   callers, the deploy used a private invoker: all three are declared
    `invoker: "public"` and the API key is what authorizes the caller.
 8. **Sales user.** Authentication → Add user (email + password). Have them
    sign in once. As Admin, open Manage Users and set the role to **Sales**.
@@ -549,6 +711,6 @@ rules, and does not write to the live project.
     the source of truth and the sheet is the read-only mirror.
 
 `npm test` covers order status, the sheet row, import matching, the orders
-HTTP handler, and the read-only machines API (auth, filters, status, and
-no media URLs). `npm run build` is still the GitHub Pages build and does
-not deploy functions.
+HTTP handler, the read-only machines API (auth, filters, status, and
+no media URLs), and the ops write API. `npm run build` is still the GitHub
+Pages build and does not deploy functions.
