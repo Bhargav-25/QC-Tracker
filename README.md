@@ -232,6 +232,7 @@ Routes (the `/api` prefix is optional; `/v1` is the version):
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/v1` | Lists resources. `tickets` is reserved and not implemented. |
+| GET | `/v1/orders` | List orders. Optional `status`, `updatedSince`, and `limit`. |
 | POST | `/v1/orders` | Create an order. Idempotent on `groupNumber`. |
 | GET | `/v1/orders/<groupNumber>` | Read one order. |
 | PATCH or PUT | `/v1/orders/<groupNumber>` | Update any order field (status, payment, comments, customer, …). |
@@ -245,6 +246,61 @@ currently returns 501.
 
 Group numbers that contain `/` must be percent-encoded in the path
 (`G338%2F9`).
+
+List. Same API key as the other routes on `api`. Filters are optional.
+`status` is an exact sales status (`Pause Shipment`, `Please Ship`, or
+`Cancelled`; case is ignored). Repeat the parameter or separate several
+with commas. `updatedSince` is an ISO date or date-time; a date alone is
+UTC midnight, and an order is included when its `updatedAt` is that instant
+or later. `limit` defaults to 200 and is capped at 500. Results are the
+most recently updated first. `count` is how many orders are in this
+response. There is one order document per group, so this read is filtered
+in memory and does not need a new Firestore index.
+
+The list is a short record: group number, customer name (`customer`),
+city, sales status, payment, shipping date, Smartr and Safexpress tracking,
+accessory tracking, installation pending, installation date, the linked
+machine number and that machine's status when one is linked, and
+`createdAt` / `updatedAt`. Phone, email, and street address are not
+included. A single-order GET still returns the full order.
+
+```
+GET /v1/orders?status=Please%20Ship&status=Pause%20Shipment&updatedSince=2026-10-01T00:00:00.000Z&limit=50
+Authorization: Bearer $ORDERS_API_KEY
+```
+
+```
+200
+{
+  "ok": true,
+  "count": 1,
+  "orders": [
+    {
+      "groupNumber": "G1458",
+      "customer": "Dr Shouvick",
+      "city": "Kolkata",
+      "status": "Please Ship",
+      "payment": "COD",
+      "shippingDate": "",
+      "smartr": "",
+      "safexpress": "",
+      "accTracking": "",
+      "installationPending": "",
+      "installationDate": "",
+      "machineNumber": "X33M050",
+      "machineStatus": "Packed",
+      "createdAt": "2026-10-22T00:00:00.000Z",
+      "updatedAt": "2026-10-22T00:00:00.000Z"
+    }
+  ]
+}
+```
+
+Deploy this function after the secret exists:
+
+```
+firebase deploy --only functions:api
+```
 
 Create:
 
@@ -716,7 +772,9 @@ rules, and does not write to the live project.
    sign in once. As Admin, open Manage Users and set the role to **Sales**.
 9. **Import.** Dry-run the script, read the unmatched report, then
    `--commit` if you want Firestore filled from the sheets.
-10. **Bots.** Point the sales bot at `POST` and `PATCH` on the `api` URL.
+10. **Bots.** Point the sales bot at `GET`, `POST`, and `PATCH` on the `api` URL.
+    `GET /v1/orders` is the list. Deploy that function with
+    `firebase deploy --only functions:api`.
     Point the inventory bot at `GET` on the `machinesApi` URL with
     `MACHINES_READ_API_KEY`. Stop writing new rows to the sheet; QC Track is
     the source of truth and the sheet is the read-only mirror.

@@ -1,5 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { STATUS } from "../src/constants.js";
 import {
   blankOrder,
@@ -24,7 +25,7 @@ import {
   parseOrdersMatrix,
 } from "../src/domain/importSheets.js";
 import { matchRoutes } from "react-router";
-import { handleOrdersHttp, matchOrdersRoute } from "../src/domain/ordersHttp.js";
+import { handleOrdersHttp, matchOrdersRoute, parseOrdersListQuery } from "../src/domain/ordersHttp.js";
 
 const packedMachine = {
   id: "m1",
@@ -304,6 +305,164 @@ describe("orders HTTP API", () => {
     const later = handleOrdersHttp({ method: "POST", urlPath: "/v1/tickets", body: {} });
     assert.equal(later.status, 501);
   });
+
+  it("lists orders without phone, email, or street address", () => {
+    const phone = "98366000082";
+    const address = "Tower 2, Park Street, Kolkata 700016";
+    const orders = [
+      {
+        ...blankOrder("G1458", {
+          status: "Please Ship",
+          payment: "COD",
+          customer: "Dr Shouvick",
+          city: "Kolkata",
+          shippingDate: "2026-10-23",
+          smartr: "SM1",
+          safexpress: "SF1",
+          accTracking: "Delhivery 1",
+          installationPending: "Yes",
+          installationDate: "2026-11-01",
+        }),
+        machineId: "m1",
+        contact: phone,
+        address,
+        email: "shouvick@example.com",
+        comments: "do not leak",
+        createdAt: "2026-10-20T00:00:00.000Z",
+        updatedAt: "2026-10-22T00:00:00.000Z",
+      },
+      {
+        ...blankOrder("G1459", { status: "Pause Shipment", payment: "Advance", customer: "Gurminder", city: "New Delhi" }),
+        contact: "9810000000",
+        address: "Some full address",
+        createdAt: "2026-10-01T00:00:00.000Z",
+        updatedAt: "2026-10-21T00:00:00.000Z",
+      },
+      {
+        ...blankOrder("G1", { status: "Cancelled", payment: "Cancelled", customer: "Old", city: "Pune" }),
+        updatedAt: "2026-10-25T12:00:00.000Z",
+      },
+    ];
+    const machines = [{ ...packedMachine, groupNumber: "G1458", note: "https://secret.example/photo" }];
+    const listed = handleOrdersHttp({
+      method: "GET",
+      urlPath: "/v1/orders",
+      orders,
+      machines,
+    });
+    assert.equal(listed.status, 200);
+    assert.equal(listed.body.ok, true);
+    assert.equal(listed.body.count, 3);
+    assert.deepEqual(listed.body.orders.map((order) => order.groupNumber), ["G1", "G1458", "G1459"]);
+    assert.deepEqual(listed.body.orders[1], {
+      groupNumber: "G1458",
+      customer: "Dr Shouvick",
+      city: "Kolkata",
+      status: "Please Ship",
+      payment: "COD",
+      shippingDate: "2026-10-23",
+      smartr: "SM1",
+      safexpress: "SF1",
+      accTracking: "Delhivery 1",
+      installationPending: "Yes",
+      installationDate: "2026-11-01",
+      machineNumber: "X33M050",
+      machineStatus: STATUS.PACKED,
+      createdAt: "2026-10-20T00:00:00.000Z",
+      updatedAt: "2026-10-22T00:00:00.000Z",
+    });
+    assert.equal(listed.body.orders[2].machineNumber, null);
+    assert.equal(listed.body.orders[2].machineStatus, null);
+    const body = JSON.stringify(listed.body);
+    assert.equal(body.includes(phone), false);
+    assert.equal(body.includes(address), false);
+    assert.equal(body.includes("shouvick@example.com"), false);
+    assert.equal(body.includes("do not leak"), false);
+    assert.equal(body.includes("https://secret.example/photo"), false);
+
+    const one = handleOrdersHttp({
+      method: "GET",
+      urlPath: "/v1/orders/G1458",
+      existing: orders[0],
+    });
+    assert.equal(one.body.order.contact, phone);
+    assert.equal(one.body.order.address, address);
+
+    const removed = handleOrdersHttp({ method: "DELETE", urlPath: "/v1/orders" });
+    assert.equal(removed.status, 405);
+    assert.match(removed.body.error, /GET to list orders or POST to create/);
+  });
+
+  it("filters the list by status, updatedSince, and limit", () => {
+    const orders = [
+      { ...blankOrder("G1458", { status: "Please Ship", customer: "Dr Shouvick" }), updatedAt: "2026-10-22T00:00:00.000Z", machineNumber: "X33M050" },
+      { ...blankOrder("G1459", { status: "Pause Shipment", customer: "Gurminder" }), updatedAt: "2026-10-21T00:00:00.000Z" },
+      { ...blankOrder("G1", { status: "Cancelled", customer: "Old" }), updatedAt: "2026-10-25T00:00:00.000Z" },
+      { ...blankOrder("G2", { status: "", customer: "Historical" }), updatedAt: "2026-10-26T00:00:00.000Z" },
+    ];
+    const please = handleOrdersHttp({
+      method: "GET",
+      urlPath: "/api/v1/orders",
+      query: { status: "please ship" },
+      orders,
+      machines: [packedMachine],
+    });
+    assert.deepEqual(please.body.orders.map((order) => order.groupNumber), ["G1458"]);
+    assert.equal(please.body.orders[0].machineNumber, "X33M050");
+    assert.equal(please.body.orders[0].machineStatus, STATUS.PACKED);
+
+    const several = handleOrdersHttp({
+      method: "GET",
+      urlPath: "/v1/orders",
+      query: { status: "Please Ship, Pause Shipment" },
+      orders,
+    });
+    assert.deepEqual(several.body.orders.map((order) => order.groupNumber), ["G1458", "G1459"]);
+
+    const repeated = handleOrdersHttp({
+      method: "GET",
+      urlPath: "/v1/orders",
+      query: { status: ["Please Ship", "Cancelled"] },
+      orders,
+    });
+    assert.deepEqual(repeated.body.orders.map((order) => order.groupNumber), ["G1", "G1458"]);
+
+    const since = handleOrdersHttp({
+      method: "GET",
+      urlPath: "/v1/orders",
+      query: { updatedSince: "2026-10-22T00:00:00.000Z" },
+      orders,
+    });
+    assert.deepEqual(since.body.orders.map((order) => order.groupNumber), ["G2", "G1", "G1458"]);
+
+    const day = handleOrdersHttp({
+      method: "GET",
+      urlPath: "/v1/orders",
+      query: { updatedSince: "2026-10-25", status: "Cancelled" },
+      orders,
+    });
+    assert.deepEqual(day.body.orders.map((order) => order.groupNumber), ["G1"]);
+    assert.equal(day.body.count, 1);
+
+    const newest = handleOrdersHttp({
+      method: "GET",
+      urlPath: "/v1/orders",
+      query: { limit: "1" },
+      orders,
+    });
+    assert.equal(newest.body.count, 1);
+    assert.equal(newest.body.orders[0].groupNumber, "G2");
+
+    assert.equal(parseOrdersListQuery({}).limit, 200);
+    assert.equal(parseOrdersListQuery({ limit: "9000" }).limit, 500);
+    assert.equal(handleOrdersHttp({ method: "GET", urlPath: "/v1/orders", query: { limit: "0" }, orders }).status, 400);
+    assert.equal(handleOrdersHttp({ method: "GET", urlPath: "/v1/orders", query: { limit: "nope" }, orders }).status, 400);
+    assert.equal(handleOrdersHttp({ method: "GET", urlPath: "/v1/orders", query: { status: "Packed" }, orders }).status, 400);
+    assert.equal(handleOrdersHttp({ method: "GET", urlPath: "/v1/orders", query: { status: "" }, orders }).status, 400);
+    assert.equal(handleOrdersHttp({ method: "GET", urlPath: "/v1/orders", query: { updatedSince: "26-10-2026" }, orders }).status, 400);
+    const badSince = handleOrdersHttp({ method: "GET", urlPath: "/v1/orders", query: { updatedSince: "26-10-2026" }, orders });
+    assert.equal(badSince.body.orders, undefined);
+  });
 });
 
 describe("order routes", () => {
@@ -318,5 +477,21 @@ describe("order routes", () => {
     );
     assert.equal(matches.at(-1).route.path, "/orders/new");
     assert.equal(matches.at(-1).params.groupNumber, undefined);
+  });
+});
+
+describe("orders function source", () => {
+  const src = readFileSync(new URL("../functions/index.js", import.meta.url), "utf8");
+  const listFn = src.slice(src.indexOf("async function loadOrdersForList"), src.indexOf("async function loadLinkedMachine"));
+  const apiBlock = src.slice(src.indexOf("export const api"), src.indexOf("async function syncGroups"));
+
+  it("reads the orders list in memory and keeps the orders key on that function", () => {
+    assert.match(listFn, /collection\("orders"\)\.get\(\)/);
+    assert.match(listFn, /collection\("machines"\)\.get\(\)/);
+    assert.equal(/\.(set|update|delete|create|add)\(/.test(listFn), false);
+    assert.match(apiBlock, /loadOrdersForList\(\)/);
+    assert.match(apiBlock, /query: req\.query/);
+    assert.match(apiBlock, /secrets:\s*\[ordersApiKey\]/);
+    assert.equal(apiBlock.includes("machinesReadApiKey"), false);
   });
 });
