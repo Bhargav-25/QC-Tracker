@@ -1,8 +1,11 @@
 import { createHash } from "node:crypto";
-import { INSTALLATION_PHOTO_COUNT, emptyDispatch, emptyInstallation } from "../constants.js";
+import { FINAL_PACKING_ITEMS, INSTALLATION_PHOTO_COUNT, STATUS, STATUS_ORDER, emptyDispatch, emptyInstallation } from "../constants.js";
 import { keysMatch, presentedApiKey } from "./apiKey.js";
+import { batchFromMachineNumber, toIsoTimestamp } from "./machinesHttp.js";
 import {
   FULFILLMENT_STATUSES,
+  blankOrder,
+  groupNumberToId,
   isSafeGroupId,
   normalizeGroupNumber,
 } from "./orderModel.js";
@@ -132,10 +135,11 @@ function decodeSegment(segment) {
   }
 }
 
-// `action` is lookup | dispatch | install | photos.
+// `action` is lookup | machines | assign | dispatch | install | photos.
 export function matchOpsRoute(urlPath) {
   const path = normalizeOpsPath(urlPath);
   const parts = path.split("/").filter(Boolean);
+  if (parts.length === 1 && parts[0] === "machines") return { action: "machines" };
   if (parts.length >= 2 && parts[0] === "groups") {
     const groupNumber = normalizeGroupNumber(decodeSegment(parts[1]));
     if (parts.length === 2) return { action: "lookup", address: { type: "group", groupNumber } };
@@ -144,6 +148,9 @@ export function matchOpsRoute(urlPath) {
     }
     if (parts.length === 3 && parts[2] === "installation") {
       return { action: "install", address: { type: "group", groupNumber } };
+    }
+    if (parts.length === 3 && parts[2] === "assign") {
+      return { action: "assign", address: { type: "group", groupNumber } };
     }
     if (parts.length === 4 && parts[2] === "installation" && parts[3] === "photos") {
       return { action: "photos", address: { type: "group", groupNumber } };
@@ -802,7 +809,313 @@ function resolveAddress(route, machines, order) {
 }
 
 function allowedMethod(action) {
-  return action === "lookup" ? "GET" : "POST";
+  if (action === "lookup" || action === "machines") return "GET";
+  return "POST";
+}
+
+const OPS_MACHINE_LIST_DEFAULT_LIMIT = 200;
+const OPS_MACHINE_LIST_MAX_LIMIT = 500;
+const STATUS_CANONICAL = new Map(STATUS_ORDER.map((status) => [status.toLowerCase(), status]));
+STATUS_CANONICAL.set("assembly", STATUS.ASSEMBLY);
+const ASSIGN_KEYS = new Set(["machineNumber", "reason", "note", "force", "customer", "city"]);
+const ASSIGN_REASONS = new Set(["auto", "reserved"]);
+
+// Same rule as the returns work: a previous cycle, or cycle > 1, means the
+// machine was returned and refurbished. Absent on machines that have not.
+export function machineIsRefurbished(machine) {
+  const archived = Array.isArray(machine?.cycles) ? machine.cycles.length : 0;
+  const stored = Number(machine?.cycle);
+  const cycle = Number.isInteger(stored) && stored > 0 ? stored : archived + 1;
+  return archived > 0 || cycle > 1;
+}
+
+function packingComplete(machine) {
+  const fp = machine?.finalPacking || {};
+  return FINAL_PACKING_ITEMS.every((item) => Boolean(fp[item.key]?.url));
+}
+
+function packedAtIso(machine) {
+  if (packingComplete(machine)) {
+    const packed = toIsoTimestamp(machine.sectionMeta?.finalPacking?.updatedAt);
+    if (packed) return packed;
+  }
+  const meta = machine?.sectionMeta || {};
+  let best = null;
+  let bestMs = -Infinity;
+  for (const value of Object.values(meta)) {
+    const iso = toIsoTimestamp(value?.updatedAt);
+    const ms = iso ? Date.parse(iso) : NaN;
+    if (!Number.isNaN(ms) && ms > bestMs) {
+      bestMs = ms;
+      best = iso;
+    }
+  }
+  return best || toIsoTimestamp(machine?.updatedAt);
+}
+
+function orderLinksMachine(order, machine) {
+  if (!order || !machine) return false;
+  if (order.machineId && order.machineId === machine.id) return true;
+  if (norm(order.machineNumber) && norm(order.machineNumber) === norm(machine.machineNumber)) return true;
+  return false;
+}
+
+function linkedGroupForMachine(machine, orders) {
+  const own = normalizeGroupNumber(machine?.groupNumber);
+  if (own) return own;
+  const hits = (orders || []).filter((order) => orderLinksMachine(order, machine));
+  const byId = hits.find((order) => order.machineId && order.machineId === machine.id);
+  const chosen = byId || hits[0];
+  return chosen ? normalizeGroupNumber(chosen.groupNumber) || null : null;
+}
+
+function queryTokens(query, key) {
+  const raw = query?.[key];
+  const parts = Array.isArray(raw) ? raw : raw == null ? [] : [raw];
+  const tokens = [];
+  for (const part of parts) {
+    for (const piece of String(part).split(",")) {
+      const token = piece.trim();
+      if (token) tokens.push(token);
+    }
+  }
+  return tokens;
+}
+
+export function parseOpsMachineQuery(query) {
+  const rawLimit = query?.limit;
+  const limitText = (Array.isArray(rawLimit) ? rawLimit[0] : rawLimit) == null
+    ? ""
+    : String(Array.isArray(rawLimit) ? rawLimit[0] : rawLimit).trim();
+  let limit = OPS_MACHINE_LIST_DEFAULT_LIMIT;
+  if (limitText) {
+    if (!/^\d+$/.test(limitText) || Number(limitText) < 1) {
+      return { error: `limit must be a whole number from 1 to ${OPS_MACHINE_LIST_MAX_LIMIT}.` };
+    }
+    limit = Math.min(Number(limitText), OPS_MACHINE_LIST_MAX_LIMIT);
+  }
+  const present = query != null && Object.prototype.hasOwnProperty.call(query, "status");
+  const statuses = [];
+  if (present) {
+    const tokens = queryTokens(query, "status");
+    if (!tokens.length) {
+      return { error: `status must be one of: ${STATUS_ORDER.join(", ")}.` };
+    }
+    for (const token of tokens) {
+      const canonical = STATUS_CANONICAL.get(token.toLowerCase());
+      if (!canonical) return { error: `status must be one of: ${STATUS_ORDER.join(", ")}.` };
+      if (!statuses.includes(canonical)) statuses.push(canonical);
+    }
+  }
+  return { limit, statuses };
+}
+
+export function listOpsMachines(machines, orders, { limit, statuses }) {
+  let rows = (Array.isArray(machines) ? machines : []).filter((machine) => machine && machine.id);
+  if (statuses?.length) {
+    rows = rows.filter((machine) => statuses.includes(computeStatus(machine)));
+  }
+  const items = rows.map((machine) => ({
+    machineNumber: norm(machine.machineNumber),
+    status: computeStatus(machine),
+    packedAt: packedAtIso(machine),
+    refurbished: machineIsRefurbished(machine),
+    groupNumber: linkedGroupForMachine(machine, orders),
+    batch: batchFromMachineNumber(machine.machineNumber),
+  }));
+  items.sort((a, b) => {
+    const left = a.packedAt ? Date.parse(a.packedAt) : NaN;
+    const right = b.packedAt ? Date.parse(b.packedAt) : NaN;
+    const l = Number.isNaN(left) ? Infinity : left;
+    const r = Number.isNaN(right) ? Infinity : right;
+    if (l !== r) return l - r;
+    return a.machineNumber.localeCompare(b.machineNumber, undefined, { numeric: true });
+  });
+  const page = items.slice(0, limit);
+  return { count: page.length, machines: page };
+}
+
+function findOrderForGroup(orders, groupNumber) {
+  const group = normalizeGroupNumber(groupNumber);
+  const id = groupNumberToId(group);
+  const matches = (orders || []).filter(
+    (order) => order && (order.id === id || normalizeGroupNumber(order.groupNumber) === group)
+  );
+  return matches.find((order) => order.id === id) || matches[0] || null;
+}
+
+function machinesNumbered(machines, machineNumber) {
+  const wanted = norm(machineNumber);
+  return (machines || []).filter((machine) => machine?.id && norm(machine.machineNumber) === wanted);
+}
+
+function assignAudit(machine, group, { reason, note, beforeMachine, beforeGroup, created }) {
+  const parts = [
+    `assign machine ${norm(machine.machineNumber)} group ${shown(group)}`,
+    `reason ${shown(reason)}`,
+    `machine ${shown(beforeMachine)} → ${norm(machine.machineNumber)}`,
+    `group ${shown(beforeGroup)} → ${shown(group)}`,
+  ];
+  if (created) parts.push("created order");
+  if (note) parts.push(`note ${note}`);
+  return opsAuditEntry({
+    machineId: machine.id,
+    machineNumber: norm(machine.machineNumber),
+    groupNumber: group,
+    section: "order",
+    action: parts.join(" "),
+  });
+}
+
+export function planAssign({ groupNumber, body, machines, orders }) {
+  const group = normalizeGroupNumber(groupNumber);
+  if (!group || !isSafeGroupId(group)) return reject(400, "groupNumber is not a valid id.");
+  if (!body || typeof body !== "object" || Array.isArray(body)) return reject(400, "Send a JSON object.");
+  const extra = unknownFields(body, ASSIGN_KEYS);
+  if (extra.length) return reject(400, "Assign accepts machineNumber, reason, note, force, customer, and city.");
+  if (!hasOwn(body, "machineNumber")) return reject(400, "machineNumber is required.");
+  const machineNumber = plainText(body.machineNumber, "machineNumber", 40);
+  if (machineNumber.error) return reject(400, machineNumber.error);
+
+  let reason = "";
+  if (hasOwn(body, "reason") && norm(body.reason)) {
+    if (typeof body.reason !== "string" || !ASSIGN_REASONS.has(norm(body.reason))) {
+      return reject(400, "reason must be auto or reserved.");
+    }
+    reason = norm(body.reason);
+  }
+  let note = "";
+  if (hasOwn(body, "note")) {
+    const parsed = optionalPlain(body.note, "note", 500);
+    if (parsed.error) return reject(400, parsed.error);
+    note = parsed.value;
+  }
+  let customer = "";
+  if (hasOwn(body, "customer")) {
+    const parsed = optionalPlain(body.customer, "customer", 200);
+    if (parsed.error) return reject(400, parsed.error);
+    customer = parsed.value;
+  }
+  let city = "";
+  if (hasOwn(body, "city")) {
+    const parsed = optionalPlain(body.city, "city", 120);
+    if (parsed.error) return reject(400, parsed.error);
+    city = parsed.value;
+  }
+  if (hasOwn(body, "force") && typeof body.force !== "boolean") {
+    return reject(400, "force must be true or false.");
+  }
+  const force = body.force === true;
+
+  const numbered = machinesNumbered(machines, machineNumber.value);
+  if (!numbered.length) return reject(404, `No machine ${machineNumber.value}.`);
+  if (numbered.length > 1) return reject(409, `More than one machine is numbered ${machineNumber.value}.`);
+  const machine = numbered[0];
+  const status = computeStatus(machine);
+  if (status !== STATUS.PACKED) {
+    return reject(409, `Machine ${norm(machine.machineNumber)} is ${status}. Only a Packed machine can be assigned.`);
+  }
+
+  const machineGroup = normalizeGroupNumber(machine.groupNumber);
+  if (machineGroup && machineGroup !== group) {
+    return reject(409, `Machine ${norm(machine.machineNumber)} is already assigned to ${machineGroup}.`);
+  }
+  const otherOrder = (orders || []).find(
+    (order) => normalizeGroupNumber(order.groupNumber) !== group && orderLinksMachine(order, machine)
+  );
+  if (otherOrder) {
+    return reject(
+      409,
+      `Machine ${norm(machine.machineNumber)} is already assigned to ${normalizeGroupNumber(otherOrder.groupNumber)}.`
+    );
+  }
+
+  const order = findOrderForGroup(orders, group);
+  const holders = (machines || []).filter(
+    (item) => item?.id && item.id !== machine.id && normalizeGroupNumber(item.groupNumber) === group
+  );
+  const orderMachineId = order?.machineId || "";
+  const orderMachineNumber = norm(order?.machineNumber);
+  const different =
+    (orderMachineId && orderMachineId !== machine.id) ||
+    (orderMachineNumber && orderMachineNumber !== norm(machine.machineNumber)) ||
+    holders.length > 0;
+  if (different && !force) {
+    const current = orderMachineNumber || norm(holders[0]?.machineNumber) || orderMachineId;
+    return reject(409, `${group} is already assigned to ${current}. Pass force:true to replace that link.`);
+  }
+
+  const same =
+    order &&
+    order.machineId === machine.id &&
+    orderMachineNumber === norm(machine.machineNumber) &&
+    machineGroup === group &&
+    order.fulfillmentStatus === STATUS.PACKED;
+  const summary = {
+    ok: true,
+    unchanged: Boolean(same),
+    createdOrder: !order,
+    groupNumber: group,
+    machineNumber: norm(machine.machineNumber),
+    machineId: machine.id,
+    status,
+    fulfillmentStatus: STATUS.PACKED,
+    reason: reason || null,
+    refurbished: machineIsRefurbished(machine),
+  };
+  if (same) return { status: 200, body: summary };
+
+  const clearMachineIds = [];
+  if (orderMachineId && orderMachineId !== machine.id) {
+    const previous = (machines || []).find((item) => item.id === orderMachineId);
+    if (!previous || normalizeGroupNumber(previous.groupNumber) === group) clearMachineIds.push(orderMachineId);
+  }
+  for (const holder of holders) {
+    if (!clearMachineIds.includes(holder.id)) clearMachineIds.push(holder.id);
+  }
+
+  const beforeMachine = orderMachineNumber || norm(holders[0]?.machineNumber);
+  const orderId = groupNumberToId(group);
+  let createOrder = null;
+  let orderUpdate = null;
+  if (!order) {
+    createOrder = {
+      ...blankOrder(group, { customer, city, machineId: machine.id, machineNumber: norm(machine.machineNumber), fulfillmentStatus: STATUS.PACKED }),
+      createdAt: SERVER_TIMESTAMP,
+      updatedAt: SERVER_TIMESTAMP,
+      createdBy: OPS_ACTOR,
+      updatedBy: OPS_ACTOR,
+    };
+  } else {
+    orderUpdate = {
+      machineId: machine.id,
+      machineNumber: norm(machine.machineNumber),
+      fulfillmentStatus: STATUS.PACKED,
+      updatedAt: SERVER_TIMESTAMP,
+      updatedBy: OPS_ACTOR,
+    };
+  }
+  return {
+    status: 200,
+    body: { ...summary, unchanged: false, createdOrder: !order },
+    assign: {
+      groupNumber: group,
+      machineNumber: norm(machine.machineNumber),
+      machineId: machine.id,
+      orderId,
+      body,
+      clearMachineIds,
+      createOrder,
+      orderUpdate,
+      audit: assignAudit(machine, group, {
+        reason,
+        note,
+        beforeMachine,
+        beforeGroup: machineGroup,
+        created: !order,
+      }),
+    },
+  };
 }
 
 // Pure handler. `expectedKey` is OPS_WRITE_API_KEY only — callers must not
@@ -811,9 +1124,11 @@ export function handleOpsHttp({
   method,
   urlPath,
   headers,
+  query,
   body,
   expectedKey,
   machines,
+  orders,
   order,
   now,
   maxPhotoBytes,
@@ -836,6 +1151,16 @@ export function handleOpsHttp({
       allow,
       body: { ok: false, error: `Ops API does not allow ${verb} on this path. Use ${allow}.` },
     };
+  }
+
+  if (route.action === "machines") {
+    const parsed = parseOpsMachineQuery(query);
+    if (parsed.error) return reject(400, parsed.error);
+    return { status: 200, body: { ok: true, ...listOpsMachines(machines, orders, parsed) } };
+  }
+
+  if (route.action === "assign") {
+    return planAssign({ groupNumber: route.address.groupNumber, body, machines, orders });
   }
 
   const resolved = resolveAddress(route, machines, order);
