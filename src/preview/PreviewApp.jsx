@@ -50,6 +50,40 @@ const machines = [
     sectionMeta: { finalPacking: { updatedAt: stamp("2026-10-23") } },
   },
   {
+    id: "m48",
+    machineNumber: "X33M048",
+    groupNumber: "G1435",
+    resistance: emptyResistanceRows(),
+    finalPacking: packed,
+    dispatch: {
+      dispatched: true,
+      date: "2026-10-20",
+      comment: "",
+      includeStand: false,
+      courier: "DP World",
+      trackingNumber: "DP9981",
+      trackingLink: "https://track.example/DP9981",
+    },
+    delivery: { delivered: true, date: "2026-10-24" },
+    installation: {
+      installed: true,
+      date: "2026-10-25",
+      installedBy: "Ravi",
+      notes: "Lobby install, customer present",
+      photos: [
+        { url: "https://example.com/install-1.jpg", path: "machines/m48/installation/1-a.jpg" },
+        null,
+        { url: "https://example.com/install-3.jpg", path: "machines/m48/installation/3-c.jpg" },
+      ],
+      video: null,
+    },
+    sectionMeta: {
+      dispatch: { updatedBy: "ops-api", updatedAt: stamp("2026-10-20") },
+      installation: { updatedBy: "ops-api", updatedAt: stamp("2026-10-25") },
+    },
+    warranty: { extensions: [] },
+  },
+  {
     id: "m47",
     machineNumber: "X33M047",
     groupNumber: "G1443",
@@ -62,6 +96,7 @@ const machines = [
       includeStand: true,
       courier: "Safexpress",
       trackingNumber: "18471189815",
+      trackingLink: "https://track.example/18471189815",
       accessoriesSeparate: true,
       accessoriesCourier: "Delhivery",
       accessoriesTracking: "2780 4413 096",
@@ -230,7 +265,7 @@ function machineDetail() {
       orders={orders}
       standCount={6}
       tickets={[]}
-      role={ROLES.PRODUCTION}
+      role={ROLES.ADMIN}
       currentUserEmail="production@example.com"
     />
   );

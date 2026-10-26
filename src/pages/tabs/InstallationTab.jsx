@@ -141,6 +141,12 @@ export default function InstallationTab({ machine, currentUserEmail }) {
         </div>
       )}
 
+      {installation.notes ? (
+        <div className="helper-text" style={{ marginBottom: 14, whiteSpace: "pre-wrap" }}>
+          Notes: {installation.notes}
+        </div>
+      ) : null}
+
       {installation.location && (
         <div className="helper-text" style={{ marginBottom: 14 }}>
           Location:{" "}
