@@ -6,9 +6,11 @@ import {
   canonicalPayment,
   groupNumberToId,
   isSafeGroupId,
+  machineForOrder,
   normalizeGroupNumber,
   toIsoDate,
 } from "./orderModel.js";
+import { computeStatus } from "../utils/status.js";
 
 // Fields a sales bot may set. Machine assignment stays in the app
 // (Production / Admin), so machineId, machineNumber, and fulfillmentStatus
@@ -137,10 +139,183 @@ export function publicOrder(order) {
   return rest;
 }
 
+// One document per group. The list is filtered in memory, so no composite
+// Firestore index is required.
+export const ORDER_LIST_DEFAULT_LIMIT = 200;
+export const ORDER_LIST_MAX_LIMIT = 500;
+
+const ORDER_LIST_KEYS = [
+  "groupNumber",
+  "customer",
+  "city",
+  "status",
+  "payment",
+  "shippingDate",
+  "smartr",
+  "safexpress",
+  "accTracking",
+  "installationPending",
+  "installationDate",
+  "machineNumber",
+  "machineStatus",
+  "createdAt",
+  "updatedAt",
+];
+
+function timeMillis(value) {
+  if (value == null || value === "") return null;
+  if (typeof value === "string") {
+    const ms = Date.parse(value);
+    return Number.isNaN(ms) ? null : ms;
+  }
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value.getTime();
+  if (typeof value.toDate === "function") {
+    const date = value.toDate();
+    return date instanceof Date && !Number.isNaN(date.getTime()) ? date.getTime() : null;
+  }
+  if (typeof value === "object" && typeof value.seconds === "number") {
+    return value.seconds * 1000 + Math.floor((value.nanoseconds || 0) / 1e6);
+  }
+  return null;
+}
+
+function toIsoTimestamp(value) {
+  if (typeof value === "string") return timeMillis(value) == null ? null : value;
+  const ms = timeMillis(value);
+  return ms == null ? null : new Date(ms).toISOString();
+}
+
+function salesStatus(order) {
+  return canonicalOrderStatus(order?.status) || (ORDER_STATUSES.includes(order?.status) ? order.status : "");
+}
+
+function parseUpdatedSince(text) {
+  if (!/^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})?)?$/.test(text)) {
+    return null;
+  }
+  const ms = Date.parse(text);
+  return Number.isNaN(ms) ? null : ms;
+}
+
+function statusTokens(query) {
+  const raw = query?.status;
+  const parts = Array.isArray(raw) ? raw : raw == null ? [] : [raw];
+  const tokens = [];
+  for (const part of parts) {
+    for (const piece of String(part).split(",")) {
+      const token = piece.trim();
+      if (token) tokens.push(token);
+    }
+  }
+  return tokens;
+}
+
+export function parseOrdersListQuery(query) {
+  const rawLimit = query?.limit;
+  const limitText = (Array.isArray(rawLimit) ? rawLimit[0] : rawLimit) == null
+    ? ""
+    : String(Array.isArray(rawLimit) ? rawLimit[0] : rawLimit).trim();
+  let limit = ORDER_LIST_DEFAULT_LIMIT;
+  if (limitText) {
+    if (!/^\d+$/.test(limitText) || Number(limitText) < 1) {
+      return { error: `limit must be a whole number from 1 to ${ORDER_LIST_MAX_LIMIT}.` };
+    }
+    limit = Math.min(Number(limitText), ORDER_LIST_MAX_LIMIT);
+  }
+
+  const rawSince = query?.updatedSince;
+  const sinceText = (Array.isArray(rawSince) ? rawSince[0] : rawSince) == null
+    ? ""
+    : String(Array.isArray(rawSince) ? rawSince[0] : rawSince).trim();
+  let updatedSince = null;
+  if (sinceText) {
+    const ms = parseUpdatedSince(sinceText);
+    if (ms == null) return { error: "updatedSince must be an ISO date or date-time." };
+    updatedSince = ms;
+  }
+
+  const present = query != null && Object.prototype.hasOwnProperty.call(query, "status");
+  const tokens = statusTokens(query);
+  const statuses = [];
+  if (present) {
+    if (!tokens.length) {
+      return { error: `status must be one of: ${ORDER_STATUSES.join(", ")}.` };
+    }
+    for (const token of tokens) {
+      const canonical = canonicalOrderStatus(token);
+      if (!canonical) {
+        return { error: `status must be one of: ${ORDER_STATUSES.join(", ")}.` };
+      }
+      if (!statuses.includes(canonical)) statuses.push(canonical);
+    }
+  }
+
+  return { limit, updatedSince, statuses };
+}
+
+// List shape only. Phone, email, and street address stay off this response.
+export function orderListItem(order, machine) {
+  const linked = machine || null;
+  const machineNumber = asText(linked?.machineNumber).trim() || asText(order?.machineNumber).trim() || null;
+  const item = {
+    groupNumber: asText(order?.groupNumber).trim(),
+    customer: asText(order?.customer).trim(),
+    city: asText(order?.city).trim(),
+    status: salesStatus(order) || asText(order?.status).trim(),
+    payment: canonicalPayment(order?.payment) || asText(order?.payment).trim(),
+    shippingDate: asText(order?.shippingDate).trim(),
+    smartr: asText(order?.smartr).trim(),
+    safexpress: asText(order?.safexpress).trim(),
+    accTracking: asText(order?.accTracking).trim(),
+    installationPending: asText(order?.installationPending).trim(),
+    installationDate: asText(order?.installationDate).trim(),
+    machineNumber,
+    machineStatus: linked ? computeStatus(linked) : null,
+    createdAt: toIsoTimestamp(order?.createdAt),
+    updatedAt: toIsoTimestamp(order?.updatedAt),
+  };
+  return item;
+}
+
+function byUpdatedDesc(a, b) {
+  const left = timeMillis(a?.updatedAt);
+  const right = timeMillis(b?.updatedAt);
+  const l = left == null ? -Infinity : left;
+  const r = right == null ? -Infinity : right;
+  if (l !== r) return r - l;
+  const lg = asText(a?.groupNumber);
+  const rg = asText(b?.groupNumber);
+  if (lg < rg) return -1;
+  if (lg > rg) return 1;
+  return 0;
+}
+
+export function listOrders(orders, machines, { limit, updatedSince, statuses }) {
+  let rows = (Array.isArray(orders) ? orders : []).filter((order) => order && typeof order === "object");
+  if (statuses?.length) {
+    rows = rows.filter((order) => statuses.includes(salesStatus(order)));
+  }
+  if (updatedSince != null) {
+    rows = rows.filter((order) => {
+      const ms = timeMillis(order.updatedAt);
+      return ms != null && ms >= updatedSince;
+    });
+  }
+  rows.sort(byUpdatedDesc);
+  const page = rows.slice(0, limit);
+  const items = page.map((order) => orderListItem(order, machineForOrder(order, machines || [])));
+  for (const item of items) {
+    for (const key of Object.keys(item)) {
+      if (!ORDER_LIST_KEYS.includes(key)) delete item[key];
+    }
+  }
+  return { count: items.length, orders: items };
+}
+
 // Pure request handler. `existing` is the current order or null.
 // Create is idempotent on group number: a second POST returns the stored
 // order and does not overwrite it. Changes go through PATCH.
-export function handleOrdersHttp({ method, urlPath, body, existing }) {
+export function handleOrdersHttp({ method, urlPath, query, body, existing, orders, machines }) {
   const route = matchOrdersRoute(urlPath);
   const verb = String(method || "GET").toUpperCase();
 
@@ -164,6 +339,11 @@ export function handleOrdersHttp({ method, urlPath, body, existing }) {
   }
 
   if (route.kind === "collection") {
+    if (verb === "GET") {
+      const parsed = parseOrdersListQuery(query);
+      if (parsed.error) return reject(400, parsed.error);
+      return { status: 200, body: { ok: true, ...listOrders(orders, machines, parsed) } };
+    }
     if (verb === "POST") {
       const groupNumber = normalizeGroupNumber(body?.groupNumber);
       if (!groupNumber) return reject(400, "groupNumber is required.");
@@ -187,7 +367,7 @@ export function handleOrdersHttp({ method, urlPath, body, existing }) {
         body: { ok: true, created: true, order },
       };
     }
-    return reject(405, "Use POST to create an order.");
+    return reject(405, "Use GET to list orders or POST to create one.");
   }
 
   if (verb === "GET") {

@@ -1,7 +1,9 @@
 // Closing a customer cycle and opening the next one. Active QC fields are
 // reset so the same machineNumber can be tested, packed, and sold again.
 // The previous dispatch / delivery / installation / order link / warranty
-// (and the QC that went with them) stay on `cycles`.
+// (and the QC that went with them) stay on `cycles`. The previous dispatch
+// is also appended to `dispatchHistory` so it is not dropped when the active
+// dispatch is cleared.
 
 import {
   emptyDelivery,
@@ -40,6 +42,22 @@ function requireDate(value, label) {
   const text = String(value || "").trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) throw new Error(`${label} must be a date (YYYY-MM-DD).`);
   return text;
+}
+
+function archivedDispatch(snapshot) {
+  return {
+    cycle: snapshot.cycle,
+    groupNumber: snapshot.groupNumber,
+    returnDate: snapshot.return.date,
+    reason: snapshot.return.reason,
+    recordedAt: snapshot.closedAt,
+    dispatch: copy(snapshot.dispatch) || emptyDispatch(),
+  };
+}
+
+function priorDispatchHistory(machine) {
+  if (!Array.isArray(machine?.dispatchHistory)) return [];
+  return machine.dispatchHistory.map((entry) => copy(entry)).filter(Boolean);
 }
 
 function cleanPhotos(photos) {
@@ -95,6 +113,7 @@ export function planReturn(machine, input, { user, now, photos = [] } = {}) {
   const reset = {
     cycle: cycle + 1,
     cycles: [...(Array.isArray(machine.cycles) ? machine.cycles : []), snapshot],
+    dispatchHistory: [...priorDispatchHistory(machine), archivedDispatch(snapshot)],
     groupNumber: "",
     resistance: emptyResistanceRows(),
     temperature: { temp: "", time: "" },

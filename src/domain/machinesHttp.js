@@ -169,6 +169,17 @@ function publicRefurb(refurb) {
   };
 }
 
+function publicDispatchHistory(machine) {
+  return (Array.isArray(machine?.dispatchHistory) ? machine.dispatchHistory : []).map((entry) => ({
+    cycle: Number(entry?.cycle) || null,
+    groupNo: text(entry?.groupNumber).trim() || null,
+    returnDate: text(entry?.returnDate),
+    reason: text(entry?.reason),
+    recordedAt: toIsoTimestamp(entry?.recordedAt),
+    dispatch: publicDispatch(entry?.dispatch),
+  }));
+}
+
 function publicCycle(cycle) {
   const group = text(cycle?.groupNumber).trim();
   return {
@@ -238,6 +249,7 @@ export function toPublicMachine(machine) {
     hasVideo: Boolean(machine.installation?.video && typeof machine.installation.video === "object"),
     cycle: currentCycleNumber(machine),
     refurbished: isRefurbished(machine),
+    dispatchHistory: publicDispatchHistory(machine),
     cycles: (Array.isArray(machine.cycles) ? machine.cycles : []).map(publicCycle),
     return: machine.intake
       ? { ...publicReturn(machine.intake), refurb: publicRefurb(machine.intake.refurb) }

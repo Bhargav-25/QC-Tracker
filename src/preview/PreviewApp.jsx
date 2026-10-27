@@ -6,6 +6,7 @@ import MachineDetail from "../pages/MachineDetail.jsx";
 import Dashboard from "../pages/Dashboard.jsx";
 import PartsPage from "../pages/PartsPage.jsx";
 import ReviveQueuePage from "../pages/ReviveQueuePage.jsx";
+import AuditLog from "../pages/AuditLog.jsx";
 import { ROLES, emptyResistanceRows } from "../constants.js";
 import { previewParts, previewQueue, previewReturnMachines } from "./refurbSample.js";
 
@@ -54,6 +55,40 @@ const machines = [
     sectionMeta: { finalPacking: { updatedAt: stamp("2026-10-23") } },
   },
   {
+    id: "m48",
+    machineNumber: "X33M048",
+    groupNumber: "G1435",
+    resistance: emptyResistanceRows(),
+    finalPacking: packed,
+    dispatch: {
+      dispatched: true,
+      date: "2026-10-20",
+      comment: "",
+      includeStand: false,
+      courier: "DP World",
+      trackingNumber: "DP9981",
+      trackingLink: "https://track.example/DP9981",
+    },
+    delivery: { delivered: true, date: "2026-10-24" },
+    installation: {
+      installed: true,
+      date: "2026-10-25",
+      installedBy: "Ravi",
+      notes: "Lobby install, customer present",
+      photos: [
+        { url: "https://example.com/install-1.jpg", path: "machines/m48/installation/1-a.jpg" },
+        null,
+        { url: "https://example.com/install-3.jpg", path: "machines/m48/installation/3-c.jpg" },
+      ],
+      video: null,
+    },
+    sectionMeta: {
+      dispatch: { updatedBy: "ops-api", updatedAt: stamp("2026-10-20") },
+      installation: { updatedBy: "ops-api", updatedAt: stamp("2026-10-25") },
+    },
+    warranty: { extensions: [] },
+  },
+  {
     id: "m47",
     machineNumber: "X33M047",
     groupNumber: "G1443",
@@ -66,6 +101,7 @@ const machines = [
       includeStand: true,
       courier: "Safexpress",
       trackingNumber: "18471189815",
+      trackingLink: "https://track.example/18471189815",
       accessoriesSeparate: true,
       accessoriesCourier: "Delhivery",
       accessoriesTracking: "2780 4413 096",
@@ -257,6 +293,58 @@ function dashboard() {
   );
 }
 
+// Sample rows for the Audit Log screen. These strings match the ops write
+// shape; this file does not import the ops handler (that module needs Node crypto).
+const previewAudit = [
+  {
+    id: "audit-user",
+    userEmail: "production@example.com",
+    machineId: "m47",
+    machineNumber: "X33M047",
+    groupNumber: "G1443",
+    section: "dispatch",
+    action: "updated",
+    timestamp: stamp("2026-10-20"),
+  },
+  {
+    id: "audit-dispatch",
+    userEmail: "ops-bot",
+    machineId: "m48",
+    machineNumber: "X33M048",
+    groupNumber: "G1435",
+    section: "dispatch",
+    action:
+      "marked dispatched X33M048 group G1435: status Packed → Dispatched courier — → DP World tracking — → DP9981 link — → https://track.example/DP9981 date — → 2026-10-20",
+    timestamp: stamp("2026-10-20"),
+  },
+  {
+    id: "audit-install",
+    userEmail: "ops-bot",
+    machineId: "m48",
+    machineNumber: "X33M048",
+    groupNumber: "G1435",
+    section: "installation",
+    action:
+      "marked installed X33M048 group G1435: status Dispatched → Installed date — → 2026-10-25 installer — → Ravi notes — → Lobby install, customer present",
+    timestamp: stamp("2026-10-25"),
+  },
+  {
+    id: "audit-photo",
+    userEmail: "ops-bot",
+    machineId: "m48",
+    machineNumber: "X33M048",
+    groupNumber: "G1435",
+    section: "installation",
+    action:
+      "uploaded installation photo lobby.jpg sha256 abc123def456 on X33M048 group G1435",
+    timestamp: stamp("2026-10-25"),
+  },
+];
+
+function auditLog() {
+  return <AuditLog entries={previewAudit} />;
+}
+
 export default function PreviewApp() {
   return (
     <Layout role={ROLES.ADMIN} userEmail="production@example.com" missingCount={0}>
@@ -268,8 +356,10 @@ export default function PreviewApp() {
         <Route path="/__preview" element={dashboard()} />
         <Route path="/__preview/parts" element={<PartsPage parts={previewParts} role={ROLES.ADMIN} currentUserEmail="admin@example.com" preview />} />
         <Route path="/__preview/revive" element={<ReviveQueuePage items={previewQueue} currentUserEmail="production@example.com" preview />} />
+        <Route path="/__preview/audit-log" element={auditLog()} />
         {/* Same paths the real pages link to, so clicks stay inside this preview. */}
         <Route path="/orders" element={ordersList()} />
+        <Route path="/audit-log" element={auditLog()} />
         <Route path="/orders/new" element={orderDetail(true)} />
         <Route path="/orders/:groupNumber" element={orderDetail()} />
         <Route path="/machine/:id" element={machineDetail()} />

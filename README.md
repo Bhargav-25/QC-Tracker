@@ -232,6 +232,7 @@ Routes (the `/api` prefix is optional; `/v1` is the version):
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/v1` | Lists resources. `tickets` is reserved and not implemented. |
+| GET | `/v1/orders` | List orders. Optional `status`, `updatedSince`, and `limit`. |
 | POST | `/v1/orders` | Create an order. Idempotent on `groupNumber`. |
 | GET | `/v1/orders/<groupNumber>` | Read one order. |
 | PATCH or PUT | `/v1/orders/<groupNumber>` | Update any order field (status, payment, comments, customer, …). |
@@ -245,6 +246,61 @@ currently returns 501.
 
 Group numbers that contain `/` must be percent-encoded in the path
 (`G338%2F9`).
+
+List. Same API key as the other routes on `api`. Filters are optional.
+`status` is an exact sales status (`Pause Shipment`, `Please Ship`, or
+`Cancelled`; case is ignored). Repeat the parameter or separate several
+with commas. `updatedSince` is an ISO date or date-time; a date alone is
+UTC midnight, and an order is included when its `updatedAt` is that instant
+or later. `limit` defaults to 200 and is capped at 500. Results are the
+most recently updated first. `count` is how many orders are in this
+response. There is one order document per group, so this read is filtered
+in memory and does not need a new Firestore index.
+
+The list is a short record: group number, customer name (`customer`),
+city, sales status, payment, shipping date, Smartr and Safexpress tracking,
+accessory tracking, installation pending, installation date, the linked
+machine number and that machine's status when one is linked, and
+`createdAt` / `updatedAt`. Phone, email, and street address are not
+included. A single-order GET still returns the full order.
+
+```
+GET /v1/orders?status=Please%20Ship&status=Pause%20Shipment&updatedSince=2026-10-01T00:00:00.000Z&limit=50
+Authorization: Bearer $ORDERS_API_KEY
+```
+
+```
+200
+{
+  "ok": true,
+  "count": 1,
+  "orders": [
+    {
+      "groupNumber": "G1458",
+      "customer": "Dr Shouvick",
+      "city": "Kolkata",
+      "status": "Please Ship",
+      "payment": "COD",
+      "shippingDate": "",
+      "smartr": "",
+      "safexpress": "",
+      "accTracking": "",
+      "installationPending": "",
+      "installationDate": "",
+      "machineNumber": "X33M050",
+      "machineStatus": "Packed",
+      "createdAt": "2026-10-22T00:00:00.000Z",
+      "updatedAt": "2026-10-22T00:00:00.000Z"
+    }
+  ]
+}
+```
+
+Deploy this function after the secret exists:
+
+```
+firebase deploy --only functions:api
+```
 
 Create:
 
@@ -295,6 +351,340 @@ GET /v1/orders/G1458
 
 `status` must be Pause Shipment, Please Ship, or Cancelled. `payment` must
 be Paid, Advance, COD, or Cancelled. Dates are `YYYY-MM-DD`.
+
+### Ops write API (dispatch and installation)
+
+A third HTTPS function, `opsApi`, updates a machine after it leaves the
+factory. It has its own secret, `OPS_WRITE_API_KEY`. The orders key and the
+machines read key are not accepted. This function does not receive those
+secrets, and the handler compares the presented key only with
+`OPS_WRITE_API_KEY` (the same constant-time `X-API-Key` / `Authorization:
+Bearer` check as the other APIs).
+
+```
+X-API-Key: <OPS_WRITE_API_KEY>
+```
+
+The base URL is printed at deploy (`Function URL (opsApi)`):
+
+```
+https://<region>-<project-id>.cloudfunctions.net/opsApi
+```
+
+A `/v1` prefix is optional. A machine is addressed by its machine number
+(`X34M005`) or by a group number (`G1435`). A group number is resolved from
+the order's machine link first (`machineId`, then `machineNumber`), then
+from `machine.groupNumber`. If more than one machine shares the group and
+the order does not point at one of them, the call is `409`. Encode a `/` in
+a group number (`G338%2F9`).
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/v1/groups/<groupNumber>` | Machine number and current status. |
+| GET | `/v1/machines` | Packed (or other status) machines, oldest packed first. |
+| POST | `/v1/groups/<groupNumber>/assign` | Link a Packed machine to that group. |
+| POST | `/v1/machines/<machineNumber>/dispatch` | Mark dispatched. |
+| POST | `/v1/groups/<groupNumber>/dispatch` | Same, by group number. |
+| POST | `/v1/machines/<machineNumber>/installation` | Mark installed. |
+| POST | `/v1/groups/<groupNumber>/installation` | Same, by group number. |
+| POST | `/v1/machines/<machineNumber>/installation/photos` | Add one installation photo. |
+| POST | `/v1/groups/<groupNumber>/installation/photos` | Same, by group number. |
+| POST | `/v1/machines/<machineNumber>/return` | Record a return and keep the previous dispatch. |
+| POST | `/v1/groups/<groupNumber>/return` | Same, by group number. |
+| POST | `/v1/machines/<machineNumber>/refurbish` | Mark refurbished and move the machine to Packed. |
+| POST | `/v1/groups/<groupNumber>/refurbish` | Same, by group number, while the group is still linked. |
+
+Every other method is `405`. There is no delete. Assembly, QC, packing, and
+delivery are not edited in place. Return archives the current cycle,
+including the previous dispatch, and clears those active fields. Refurbish
+then marks the machine Packed. A linked order's `fulfillmentStatus`
+is refreshed when the computed status changes. The sheet mirror runs from
+the existing machine trigger. `updatedBy` on the machine, and
+`sectionMeta` for the section that was saved, is `ops-api`.
+
+Each successful change also appends one `auditLog` document in the same
+batch as the machine update (the same transaction, for a photo). That is
+the collection the Audit Log page reads. The row's user is `ops-bot`. It
+stores the machine number, the group number, the section, the action, and
+a server timestamp. The action includes the previous and new status, plus
+the previous and new courier, tracking number, tracking link, and date for
+dispatch; the previous and new date for installation; and the file name
+and SHA-256 for each new photo. An identical retry (`"unchanged": true` or
+`"duplicate": true`) does not add a row, and neither does a rejected call
+(`401`, `400`, `409`, `413`, or `405`). Assignment is included: the
+machine link and its `ops-bot` audit row commit in one transaction.
+Return and refurbish do the same: the machine update, the order unlink
+when the machine was linked, and the `ops-bot` audit row commit in one
+transaction. An unchanged retry does not add a row.
+
+List machines. Read-only, same key. `status` is optional and matches the
+computed status exactly (repeat it, or separate several with commas).
+`limit` defaults to 200 and is capped at 500. Each row is the machine
+number, status, `packedAt` (when final packing was saved, otherwise the
+latest section change), `refurbished` (true when the machine has an earlier
+cycle, the same rule as a returned-and-refurbished machine), the linked
+group number, and the batch parsed from the machine number (`X34M005` is
+batch 34). Oldest `packedAt` comes first. Nothing else is returned.
+
+```
+GET /v1/machines?status=Packed&limit=50
+X-API-Key: $OPS_WRITE_API_KEY
+```
+
+Assign a machine to a group. This writes the same link as the order page:
+`machine.groupNumber`, and the order's `machineId`, `machineNumber`, and
+`fulfillmentStatus`. The machine must exist and be Packed. A refurbished
+machine is allowed once it is Packed again. A machine already linked to a
+different group is `409`. If this group is already linked to a different
+machine, that is also `409` unless the body sets `"force": true`, which
+clears the previous machine's group and moves the link. Sending the same
+group and machine again returns `"unchanged": true` and does not add an
+audit row. `reason` is `auto` or `reserved`. `note` is optional.
+
+If the group has no order yet, the call creates one minimal order the same
+way `POST /v1/orders` does: `Please Ship`, `Paid`, and the optional
+`customer` and `city`. It does not overwrite an order that already exists.
+The audit action starts with `assign machine` and includes the machine
+number, the group number, the reason, and the previous and new machine and
+group. Rejected calls do not write a row.
+
+```
+POST /v1/groups/G1435/assign
+X-API-Key: $OPS_WRITE_API_KEY
+Content-Type: application/json
+
+{ "machineNumber": "X34M005", "reason": "auto" }
+```
+
+After that, `GET /v1/groups/G1435` returns that machine number.
+
+Dates are `YYYY-MM-DD`. When a date is omitted and the section does not
+already have one, it defaults to **today in IST** (`Asia/Kolkata`). Sending
+the same dispatch tracking again does not write and does not move
+`sectionMeta.dispatch.updatedAt` (that timestamp is what the app treats as
+when the machine became Dispatched). The same rule applies to installation.
+
+Mark dispatched. `courier` is free text (`DP World`, `Delhivery`,
+`Allcargo`, …). `shipper` is an alias. Send a tracking number, an
+`http`/`https` tracking link, or both. `trackingUrl` is an alias for
+`trackingLink`. The call sets `dispatch.dispatched`, the date, the courier,
+and the tracking fields, and leaves stand, accessories, and the comment as
+they were. A link with no number is also stored in the tracking-number
+field so the Dispatch tab and the sheet still show it.
+
+```
+POST /v1/groups/G1435/dispatch
+X-API-Key: $OPS_WRITE_API_KEY
+Content-Type: application/json
+
+{
+  "courier": "DP World",
+  "trackingNumber": "DP9981",
+  "trackingLink": "https://track.example/DP9981"
+}
+```
+
+```
+200
+{
+  "ok": true,
+  "unchanged": false,
+  "machineNumber": "X34M005",
+  "machineId": "m1",
+  "groupNumber": "G1435",
+  "status": "Dispatched",
+  "updatedBy": "ops-api",
+  "dispatch": {
+    "dispatched": true,
+    "date": "2026-10-26",
+    "courier": "DP World",
+    "trackingNumber": "DP9981",
+    "trackingLink": "https://track.example/DP9981"
+  }
+}
+```
+
+The same body again returns `"unchanged": true` and does not write.
+
+Mark installed. The machine must already be dispatched or delivered, otherwise
+the response is `409` and names the current status. `notes` and `installer`
+are optional. `installer` is stored as `installation.installedBy` (the
+Installation tab shows it). `notes` is stored on `installation.notes` and
+shown on that tab. Photos and video already on the machine are kept.
+
+```
+POST /v1/machines/X34M005/installation
+X-API-Key: $OPS_WRITE_API_KEY
+Content-Type: application/json
+
+{ "date": "2026-10-26", "installer": "Ravi", "notes": "Lobby install" }
+```
+
+Installation photos are **one image per request**, JSON, not multipart.
+Cloud Functions parses a JSON body directly, and one base64 image stays
+inside the request size limit. Fields: `filename`, `contentType`, `data`
+(raw base64 or a `data:image/...;base64,...` URL), and optional `id` (a
+retry key). JPEG, PNG, WebP, or GIF, at most **8 MB** decoded. The type is
+taken from the file bytes. The file is stored at
+`machines/<machineId>/installation/<timestamp>-<filename>`, the same prefix
+the app uses, and appended into the first empty slot of
+`installation.photos` (the tab shows four). A repeat of the same bytes
+(SHA-256) or the same `id` returns the existing photo with `"duplicate": true`
+and does not add a second row. A fifth photo is `409`.
+
+```
+POST /v1/machines/X34M005/installation/photos
+X-API-Key: $OPS_WRITE_API_KEY
+Content-Type: application/json
+
+{
+  "filename": "lobby.jpg",
+  "contentType": "image/jpeg",
+  "id": "job-42",
+  "data": "<base64>"
+}
+```
+
+`201` is a new photo. `200` with `"duplicate": true` is a retry. The
+response includes `photo.url`, `photo.path`, `photo.contentHash`, and
+`photo.clientId`.
+
+Return a machine that has left the factory. The status must be Dispatched,
+Delivered, or Installed. `date` and `reason` are required. `receivedAt`
+defaults to `date`. `notes` and `fromGroupNo` are optional; `fromGroupNo`
+defaults to the machine's current group. The call writes the same cycle
+archive as the Return tab (`cycles`: previous dispatch, delivery,
+installation, order link, and warranty) and appends that dispatch onto
+`dispatchHistory` before the active dispatch is cleared. The previous
+order is unlinked in the same transaction. Status becomes **Returned**.
+The same date and reason again returns `"unchanged": true` and does not
+write. A Packed machine, or a second return while refurbishment is still
+open, is `409`.
+
+```
+POST /v1/machines/X34M005/return
+X-API-Key: $OPS_WRITE_API_KEY
+Content-Type: application/json
+
+{
+  "date": "2026-10-27",
+  "reason": "Customer rejected the installation"
+}
+```
+
+```
+200
+{
+  "ok": true,
+  "unchanged": false,
+  "machineNumber": "X34M005",
+  "machineId": "m1",
+  "groupNumber": "G1435",
+  "status": "Returned",
+  "cycle": 2,
+  "refurbished": true,
+  "updatedBy": "ops-api",
+  "return": {
+    "date": "2026-10-27",
+    "reason": "Customer rejected the installation",
+    "receivedAt": "2026-10-27",
+    "fromGroupNo": "G1435",
+    "notes": ""
+  },
+  "dispatchHistory": [
+    {
+      "cycle": 1,
+      "groupNumber": "G1435",
+      "returnDate": "2026-10-27",
+      "reason": "Customer rejected the installation",
+      "recordedAt": "2026-10-27T00:00:00.000Z",
+      "dispatch": {
+        "dispatched": true,
+        "date": "2026-10-20",
+        "courier": "DP World",
+        "trackingNumber": "DP9981",
+        "trackingLink": "https://track.example/DP9981",
+        "includeStand": false
+      }
+    }
+  ]
+}
+```
+
+`dispatchHistory` on the machine document stores the full previous dispatch
+(comment, stand, and accessories included). The response above is the
+summary. The read-only machines API returns the same history with the
+normal dispatch fields and no photo URLs.
+
+Refurbish marks that open return complete and moves the machine to
+**Packed**, so it can be assigned and dispatched again. `date` is optional
+and defaults to today in IST. The previous dispatch stays on
+`dispatchHistory`. This does not log part replacements; the workshop still
+does that on the Refurbish tab. A machine that is already Packed after an
+earlier refurbish returns `"unchanged": true`. Calling refurbish before a
+return is `409`. Return clears the group link, so the refurbish call after
+that uses the machine number.
+
+```
+POST /v1/machines/X34M005/refurbish
+X-API-Key: $OPS_WRITE_API_KEY
+Content-Type: application/json
+
+{ "date": "2026-10-28" }
+```
+
+```
+200
+{
+  "ok": true,
+  "unchanged": false,
+  "machineNumber": "X34M005",
+  "machineId": "m1",
+  "groupNumber": null,
+  "status": "Packed",
+  "cycle": 2,
+  "refurbished": true,
+  "updatedBy": "ops-api",
+  "refurb": { "completedAt": "2026-10-28", "packed": true },
+  "dispatchHistory": [ "...the entry written by return..." ]
+}
+```
+
+`POST /v1/groups/<groupNumber>/return` and `POST /v1/groups/<groupNumber>/refurbish`
+are the same operations addressed by group number. Refurbish by group only
+resolves a machine that is still linked to that group.
+
+These two routes deploy with the rest of `opsApi`. No new secret and no
+rules change: the function uses the Admin SDK.
+
+```
+firebase deploy --only functions:opsApi
+```
+
+Lookup:
+
+```
+GET /v1/groups/G1435
+X-API-Key: $OPS_WRITE_API_KEY
+```
+
+```
+200
+{ "ok": true, "groupNumber": "G1435", "machineNumber": "X34M005", "machineId": "m1", "status": "Packed" }
+```
+
+No Firestore or Storage rules change is required. The function uses the
+Admin SDK, which bypasses the client rules. The app's signed-in users still
+read and write `machines/{machineId}/...` in Storage the same way as before.
+
+Generate a key that is different from the other two, store it only as a
+secret, and deploy this function:
+
+```
+openssl rand -hex 32
+firebase functions:secrets:set OPS_WRITE_API_KEY
+firebase deploy --only functions:opsApi
+```
 
 ### Machines API (inventory bot)
 
@@ -536,9 +926,14 @@ machine number**.
    link), the date it was received at the workshop, inspection notes, and
    photos. Saving archives that customer as the next entry in `cycles`
    (cycle 1 is the first customer): dispatch, delivery, installation, the
-   order link, and warranty. The active checks are cleared so the machine
-   can be tested, packed, and linked to a new order. The previous order is
-   unlinked. Status becomes **Returned**.
+   order link, and warranty. The same dispatch is appended to
+   `dispatchHistory`, so clearing the active dispatch does not delete it.
+   The active checks are cleared so the machine can be tested, packed, and
+   linked to a new order. The previous order is unlinked. Status becomes
+   **Returned**. The ops API can do this for a Dispatched, Delivered, or
+   Installed machine, then mark it refurbished and Packed again (see Ops
+   write API). The workshop screen still walks Testing → Packed after
+   refurbishment is marked complete.
 2. **Refurbish.** Log each replacement: part, qty, whether the fitted part
    was **New** or **Revived**, and whether the part that came off is **Scrap**
    or **Revive queue**. Common parts are quick-pick chips, then occasional
@@ -685,7 +1080,9 @@ rules, and does not write to the live project.
 5. **Machines read API key.** Generate a different key and store it as its
    own secret. The orders key will not authorize these reads.
    `openssl rand -hex 32`, then
-   `firebase functions:secrets:set MACHINES_READ_API_KEY`.
+   `firebase functions:secrets:set MACHINES_READ_API_KEY`. The ops write key
+   is a third secret. In **Ops write API**, run
+   `firebase functions:secrets:set OPS_WRITE_API_KEY`.
 6. **Sheets service account.** In Google Cloud (same project, or any project
    you control): APIs & Services → enable **Google Sheets API**. IAM →
    create a service account. Create a JSON key. Share the orders spreadsheet
@@ -696,15 +1093,19 @@ rules, and does not write to the live project.
 7. **Deploy functions.** `npm install` inside `functions/`, then
    `firebase deploy --only functions`. The predeploy hook bundles
    `functions/lib` (the directory Cloud Functions actually uploads). Note
-   both URLs from the deploy output: `api` for the sales bot and
-   `machinesApi` for the inventory bot. If a function rejects anonymous
-   callers, the deploy used a private invoker: both are declared
+   the URLs from the deploy output: `api` for the sales bot, `machinesApi`
+   for the inventory bot, and `opsApi` for dispatch and installation writes.
+   To deploy only the ops function after its secret exists:
+   `firebase deploy --only functions:opsApi`. If a function rejects anonymous
+   callers, the deploy used a private invoker: all three are declared
    `invoker: "public"` and the API key is what authorizes the caller.
 8. **Sales user.** Authentication → Add user (email + password). Have them
    sign in once. As Admin, open Manage Users and set the role to **Sales**.
 9. **Import.** Dry-run the script, read the unmatched report, then
    `--commit` if you want Firestore filled from the sheets.
-10. **Bots.** Point the sales bot at `POST` and `PATCH` on the `api` URL.
+10. **Bots.** Point the sales bot at `GET`, `POST`, and `PATCH` on the `api` URL.
+    `GET /v1/orders` is the list. Deploy that function with
+    `firebase deploy --only functions:api`.
     Point the inventory bot at `GET` on the `machinesApi` URL with
     `MACHINES_READ_API_KEY`. Stop writing new rows to the sheet; QC Track is
     the source of truth and the sheet is the read-only mirror.
@@ -721,6 +1122,7 @@ rules, and does not write to the live project.
 
 `npm test` covers order status, the sheet row, import matching, the orders
 HTTP handler, the read-only machines API (auth, filters, status, and no
-media URLs), and returns / refurb / the part ledger (including that the
+media URLs), the ops write API (dispatch, installation, assignment, return,
+and refurbish), and returns / refurb / the part ledger (including that the
 screen status and the API status match). `npm run build` is still the
 GitHub Pages build and does not deploy functions.

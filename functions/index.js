@@ -39,6 +39,19 @@ async function loadOrder(groupNumber) {
   return serializeOrder(snap.id, snap.data());
 }
 
+// The orders collection is one document per group. Read it and filter in
+// the handler instead of adding a composite index.
+async function loadOrdersForList() {
+  const [orderSnap, machineSnap] = await Promise.all([
+    db.collection("orders").get(),
+    db.collection("machines").get(),
+  ]);
+  return {
+    orders: orderSnap.docs.map((snap) => serializeOrder(snap.id, snap.data())),
+    machines: machineSnap.docs.map((snap) => ({ id: snap.id, ...snap.data() })),
+  };
+}
+
 async function loadLinkedMachine(order) {
   if (!order?.machineId && !order?.machineNumber && !order?.groupNumber) return null;
   if (order.machineId) {
@@ -64,17 +77,27 @@ export const api = onRequest(
       const urlPath = req.path || "/";
       const route = matchOrdersRoute(urlPath);
       let existing = null;
+      let orders = [];
+      let machines = [];
+      const verb = String(req.method || "GET").toUpperCase();
       if (route.kind === "document") {
         existing = await loadOrder(route.groupNumber);
-      } else if (route.kind === "collection" && req.method === "POST") {
+      } else if (route.kind === "collection" && verb === "POST") {
         existing = await loadOrder(normalizeGroupNumber(req.body?.groupNumber));
+      } else if (route.kind === "collection" && verb === "GET") {
+        const loaded = await loadOrdersForList();
+        orders = loaded.orders;
+        machines = loaded.machines;
       }
 
       const result = handleOrdersHttp({
         method: req.method,
         urlPath,
+        query: req.query,
         body: req.body,
         existing,
+        orders,
+        machines,
       });
 
       if (result.create) {
@@ -221,3 +244,7 @@ export const syncMachineToSheet = onDocumentWritten(
     await syncGroups(groups);
   }
 );
+
+// Dispatch, installation, return, and refurbish writes. Separate function and secret from `api`
+// and `machinesApi`, so those handlers can change without editing this one.
+export { opsApi } from "./opsApi.js";

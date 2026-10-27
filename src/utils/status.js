@@ -7,6 +7,8 @@ export { cycleCount, isRefurbished } from "../domain/machineCycle.js";
 // Returned / Refurbishing describe the open return on the current cycle.
 // Once refurbishment is marked complete, the new cycle uses the same
 // Testing > Packed > Dispatched > Delivered > Installed precedence.
+// The ops refurbish endpoint also sets intake.refurb.packed, which counts
+// as Packed without waiting for new final-packing photos.
 export function computeStatus(machine) {
   if (!machine) return STATUS.ASSEMBLY;
 
@@ -24,7 +26,9 @@ export function computeStatus(machine) {
   const fp = machine.finalPacking || {};
   const finalPackingDone =
     fp.machineBolted?.url && fp.fastnersBox?.url && fp.frontCover?.url && fp.finalPacked?.url;
-  if (finalPackingDone) return STATUS.PACKED;
+  // Workshop refurb complete leaves `packed` unset, so that machine stays on
+  // the QC path. Ops refurbish sets it and the machine is Packed immediately.
+  if (finalPackingDone || intake?.refurb?.packed === true) return STATUS.PACKED;
 
   const resistanceStarted = (machine.resistance || []).some(
     (row) => row.eccentric !== "" || row.concentric !== ""

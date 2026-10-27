@@ -92,7 +92,33 @@ describe("return cycles and status", () => {
     assert.deepEqual(plan.reset.warranty.extensions, []);
     assert.equal(plan.reset.resistance[0].eccentric, "");
     assert.equal(plan.reset.intake.fromGroupNo, "G1443");
+    assert.equal(plan.reset.dispatchHistory.length, 1);
+    assert.equal(plan.reset.dispatchHistory[0].cycle, 1);
+    assert.equal(plan.reset.dispatchHistory[0].groupNumber, "G1443");
+    assert.equal(plan.reset.dispatchHistory[0].reason, "Coating worn");
+    assert.equal(plan.reset.dispatchHistory[0].dispatch.dispatched, true);
+    assert.equal(plan.reset.dispatchHistory[0].dispatch.courier, "Safexpress");
+    assert.equal(plan.reset.dispatchHistory[0].dispatch.trackingNumber, "1847");
+    assert.equal(plan.reset.dispatchHistory[0].dispatch.includeStand, true);
     assert.equal(computeStatus({ ...machine, ...plan.reset }), STATUS.RETURNED);
+
+    const again = planReturn(
+      {
+        ...machine,
+        ...plan.reset,
+        intake: {
+          ...plan.reset.intake,
+          refurb: { ...plan.reset.intake.refurb, completedAt: "2026-11-01" },
+        },
+        dispatch: { dispatched: true, date: "2026-11-01", courier: "Delhivery", trackingNumber: "ZZ" },
+      },
+      { date: "2026-12-01", reason: "Second return", fromGroupNo: "G2000", receivedAt: "2026-12-02", notes: "" },
+      { now: "2026-12-02T00:00:00.000Z" }
+    );
+    assert.equal(again.reset.dispatchHistory.length, 2);
+    assert.equal(again.reset.dispatchHistory[0].dispatch.trackingNumber, "1847");
+    assert.equal(again.reset.dispatchHistory[1].dispatch.trackingNumber, "ZZ");
+    assert.equal(again.reset.dispatch.dispatched, false);
   });
 
   it("uses Returned, then Refurbishing, then the normal cycle once refurb is complete", () => {
@@ -128,6 +154,7 @@ describe("return cycles and status", () => {
     const stages = [returned, refurbishing, { ...refurbishing, ...completed }, packed];
     assert.equal(computeStatus(returned), STATUS.RETURNED);
     assert.equal(computeStatus(refurbishing), STATUS.REFURBISHING);
+    assert.notEqual(completed.intake.refurb.packed, true);
     assert.equal(computeStatus({ ...refurbishing, ...completed }), STATUS.ASSEMBLY);
     assert.equal(computeStatus(packed), STATUS.PACKED);
     for (const machine of stages) {
@@ -151,6 +178,10 @@ describe("return cycles and status", () => {
     assert.equal(pub.return.photoCount, 1);
     assert.equal(pub.return.reason, "Back");
     assert.equal(pub.status, STATUS.RETURNED);
+    assert.equal(pub.dispatch.dispatched, false);
+    assert.equal(pub.dispatchHistory[0].dispatch.dispatched, true);
+    assert.equal(pub.dispatchHistory[0].dispatch.trackingNumber, "1847");
+    assert.equal(pub.dispatchHistory[0].groupNo, "G1443");
     for (const leak of [SECRET_URL, SECRET_PATH, "tech@example.com", "https://", "gs://"]) {
       assert.equal(encoded.includes(leak), false, leak);
     }
