@@ -1,0 +1,113 @@
+code,name,group,unit,revivable,frequency
+0000015,Frame,Sub-assembly,pcs,yes,
+0000003,GBSM,Frame,pcs,yes,
+0000004,Motor Holding Plate 1,Frame,pcs,yes,
+0000005,Motor Holding Plate 2,Frame,pcs,yes,
+0000006,Tab Mount,Frame,pcs,yes,
+0000007,L Block - 1,Frame,pcs,no,
+0000008,L Block - 2,Frame,pcs,no,
+0000009,Top Pulley Rod,Frame,pcs,no,
+RM_TAB_MOUNT_SHAFT,Tab Mount Shaft,Frame,pcs,no,
+0000016,Arm,Sub-assembly,pcs,yes,common
+0000018,Arm Plate - 1,Arm,pcs,yes,
+0000019,Arm Plate-2 CSK,Arm,pcs,yes,
+0000020,Arm Plate - 3,Arm,pcs,yes,
+0000033,Arm End,Sub-assembly,pcs,no,common
+0000026,Arm End Spacer,Arm End,pcs,yes,
+0000023,Arm End Pulley,Arm End,pcs,yes,
+0000024,608 Z Bearings,Arm End,pcs,no,
+0000028,Arm End Part C,Arm End,pcs,no,
+0000032,Bearing 6003z,Arm End,pcs,no,
+0000030,Arm End Sub,Sub-assembly,pcs,yes,common
+0000027,Arm End Shaft,Arm End,pcs,no,
+00000554,Arm End SM Bend (Ferra),Arm End,pcs,yes,
+0000025,Arm End Stud,Arm End,pcs,yes,
+RM_ALU_POP_RIVET_4_9X10_FERRA,Alu Pop Rivets 4.9x10 (3/16 x 3/8) (Ferra),Arm End,pcs,no,
+00000563,Circlip Internal 22mm (Ferra),Arm End,pcs,no,
+00000549,Circlip Ext 17mm (Ferra),Arm End,pcs,no,
+0000173,Shoulder Part,Sub-assembly,pcs,yes,common
+0000035,Shoulder Plate - 1,Shoulder Part,pcs,yes,
+0000036,Shoulder Plate - 2,Shoulder Part,pcs,yes,
+0000037,Shoulder Weld Plate,Shoulder Part,pcs,yes,
+0000038,Shoulder Disk and Shaft,Shoulder Part,pcs,no,
+0000034,Shoulder Rope Guide,Shoulder Part,pcs,no,
+0000047,Slider,Sub-assembly,pcs,no,occasional
+0000040,Slider SM,Slider,pcs,yes,occasional
+0000046,Slider Centre Shaft,Slider,pcs,yes,occasional
+0000043,Linear Bearings,Slider,pcs,no,occasional
+0000044,Slider Spacer,Slider,pcs,no,occasional
+0000041,Slider Rope guide 1 Big - 3D Printed,Slider,pcs,no,occasional
+0000042,Slider Rope guide 2 Small - 3D Printed,Slider,pcs,no,occasional
+0000045,Pulley,Slider,pcs,no,occasional
+0000217,SS Allen Cap Screws 4x25,Slider,pcs,no,
+0000216,SS Allen Cap Screws 4x16,Slider,pcs,no,
+RM_SS_CIRCLIP_EXT_28MM,SS Circlip External 28mm,Slider,pcs,no,
+0000174,Electrical Plate 36v,Sub-assembly,pcs,no,
+0000119,Led Boards,Electrical Plate,pcs,no,
+0000120,Power Supply - 36v,Electrical Plate,pcs,no,
+0000122,Brake Resistor,Electrical Plate,pcs,no,
+0000126,Fans,Electrical Plate,pcs,no,
+0000129,3D Print for Led Board,Electrical Plate,pcs,no,
+0000131,3D Print for Controller,Electrical Plate,pcs,no,
+0000183,Controller Assembled,Sub-assembly,pcs,no,occasional
+0000218,SS Allen Cap Screws 5x10,Electrical Plate,pcs,no,
+0000214,SS Allen Cap Screws 4x6,Electrical Plate,pcs,no,
+0000209,SS M/Screws Pan Ph 3x6,Electrical Plate,pcs,no,
+0000358,Led Power Cable,Sub-assembly,pcs,no,
+0000240,MS BI Nuts Full Hex M5 (Rivet),Electrical Plate,pcs,no,
+0000077,Electronics Plate,Electrical Plate,pcs,yes,
+0000283,AC Cable Assembled,Sub-assembly,pcs,no,
+0000215,SS Allen Cap Screws 4x12,Electrical Plate,pcs,no,
+0000172,Main Sub,Sub-assembly,pcs,no,
+0000053,Contactless Washer,Main Sub,pcs,no,
+0000054,3D Print for 2 PIN socket,Main Sub,pcs,no,
+0000057,Shoulder Knobs,Main Sub,pcs,no,common
+0000058,Side locking Knob,Main Sub,pcs,no,common
+0000059,Slider Adapter,Main Sub,pcs,yes,
+0000060,Rope End,Main Sub,pcs,no,common
+0000061,3pin socket 3d print,Main Sub,pcs,no,
+0000063,Shoulder pin,Main Sub,pcs,no,
+0000064,Shoulder pin guide,Main Sub,pcs,no,
+0000065,Top pulley Rope Guide,Main Sub,pcs,yes,
+0000066,Bearings 51107,Main Sub,pcs,no,
+0000067,Bearings 51105,Main Sub,pcs,no,
+0000069,Shoulder Caps,Main Sub,pcs,no,common
+0000070,Led Channels,Main Sub,mtr,no,
+0000071,Slider Rods,Main Sub,pcs,no,
+0000049,Strain Relievers,Main Sub,pcs,no,
+0000055,Braided Rope,Main Sub,mtr,no,common
+0000056,Hooks (carabiners),Main Sub,pcs,no,common
+0000062,Pipe end cover 3D Print,Main Sub,pcs,no,
+0000068,Tab Holder,Main Sub,pcs,no,
+0000021,Arm Knob Spacer,Main Sub,pcs,yes,
+0000223,SS Allen Cap Screws 10x70,Main Sub,pcs,no,
+0000220,SS Allen Cap Screws 8x16,Main Sub,pcs,no,
+0000219,SS Allen Cap Screws 5x25,Main Sub,pcs,no,
+0000213,SS Allen Cap Screws 3x25,Main Sub,pcs,no,
+0000207,SS Nylock Nuts M10,Main Sub,pcs,no,
+0000208,SS Hex Nuts M4,Main Sub,pcs,no,
+0000232,SS Plain Washers M5x16 OD,Main Sub,pcs,no,
+0000317,Rope Stopper,Main Sub,pcs,yes,
+0000519,Big Springs,Main Sub,pcs,no,
+0000229,HT Hex Nuts M24x1.5 Pitch Half Nut,Main Sub,pcs,no,
+0000052,Springs,Main Sub,pcs,no,
+0000011,Bushes,Main Sub,pcs,no,
+RM_MOTOR_ROPE_GUIDE_3D,Motor Rope Guide - 3D Printed,Main Sub,pcs,no,
+RM_CIRCLIP_EXT_25MM,Circlip External 25mm,Main Sub,pcs,no,
+0000211,SS Allen CSK Screws 10x60,Main Sub,pcs,no,
+0000225,HT Allen CSK Screws 10x16,Main Sub,pcs,no,
+0000170,Covers,Sub-assembly,pcs,no,common
+0000073,Back Covers,Covers,pcs,yes,common
+0000074,Front Covers,Covers,pcs,yes,common
+0000075,Top Covers,Covers,pcs,yes,common
+0000076,Bottom Covers,Covers,pcs,yes,common
+0000204,Motor Assembled,Sub-assembly,pcs,no,occasional
+0000205,Pedal Assembled,Sub-assembly,pcs,no,
+0000206,Tab Sub System,Sub-assembly,pcs,no,
+0000203,Led Strips Assembled,Sub-assembly,pcs,no,
+0000083,Barbells,Accessories,pcs,no,common
+0000105,Accessories Holder (Hanger),Accessories,pcs,yes,common
+0000080,Ankle Strap,Accessories,pcs,no,common
+0000081,D Handles,Accessories,pcs,no,common
+0000082,Tricep Rope,Accessories,pcs,no,common
+0000285,Fans Assembled,Sub-assembly,pcs,no,

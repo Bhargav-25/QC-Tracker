@@ -4,7 +4,7 @@ import { defineSecret } from "firebase-functions/params";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 import { keysMatch, presentedApiKey } from "../src/domain/apiKey.js";
-import { groupNumberToId, normalizeGroupNumber } from "../src/domain/orderModel.js";
+import { groupNumberToId, isSafeGroupId, normalizeGroupNumber } from "../src/domain/orderModel.js";
 import {
   OPS_ACTOR,
   OPS_AUDIT_ACTOR,
@@ -16,6 +16,9 @@ import {
   matchOpsRoute,
   placeInstallationPhoto,
   planAssign,
+  planOpsRefurbish,
+  planOpsReturn,
+  selectOpsMachine,
 } from "../src/domain/opsHttp.js";
 
 // This function's only secret is the ops write key. The orders secret and the
@@ -261,6 +264,60 @@ async function commitAssign(db, assign) {
   return outcome;
 }
 
+// Return and refurbish re-read the machine inside the transaction so the
+// dispatch copied into dispatchHistory is the one stored, then commit that
+// update, the order unlink, and the ops-bot audit row together.
+async function commitCycle(db, commit) {
+  const auditRef = db.collection("auditLog").doc();
+  let outcome = { status: 409, body: { ok: false, error: "Could not be saved." } };
+  await db.runTransaction(async (tx) => {
+    const machineQuery = await tx.get(db.collection("machines").where("machineNumber", "==", commit.machineNumber));
+    const machines = machineQuery.docs.map(docData);
+    const selected = selectOpsMachine({
+      address: { type: "machine", machineNumber: commit.machineNumber },
+      machines,
+      order: null,
+    });
+    if (!selected.machine) {
+      outcome = { status: 404, body: { ok: false, error: `No machine ${commit.machineNumber}.` } };
+      return;
+    }
+    const machine = selected.machine;
+    const group = normalizeGroupNumber(machine.groupNumber);
+    let orderSnap = null;
+    let order = null;
+    if (group && isSafeGroupId(group)) {
+      orderSnap = await tx.get(db.collection("orders").doc(groupNumberToId(group)));
+      if (orderSnap.exists) order = docData(orderSnap);
+    }
+    const parsedNow = new Date(commit.now);
+    const now = Number.isNaN(parsedNow.getTime()) ? new Date() : parsedNow;
+    const planned = commit.kind === "refurbish"
+      ? planOpsRefurbish(machine, commit.body, now, order)
+      : planOpsReturn(machine, commit.body, now, order);
+    if (!planned.write) {
+      outcome = { status: planned.status, body: planned.body };
+      return;
+    }
+    tx.update(
+      db.collection("machines").doc(planned.write.machineId),
+      stampUpdate(buildMachineUpdate(planned.write))
+    );
+    if (orderSnap?.exists && planned.write.orderClear?.id) {
+      const orderData = orderSnap.data();
+      const linked =
+        orderData.machineId === machine.id ||
+        (orderData.machineNumber && orderData.machineNumber === machine.machineNumber);
+      if (linked) {
+        tx.update(db.collection("orders").doc(orderSnap.id), stampUpdate(planned.write.orderClear.fields));
+      }
+    }
+    tx.set(auditRef, auditWrite(planned.write.audit));
+    outcome = { status: planned.status, body: planned.body };
+  });
+  return outcome;
+}
+
 export const opsApi = onRequest(
   {
     secrets: [opsWriteApiKey],
@@ -308,6 +365,12 @@ export const opsApi = onRequest(
 
       if (result.assign) {
         const committed = await commitAssign(db, result.assign);
+        res.status(committed.status).json(committed.body);
+        return;
+      }
+
+      if (result.commit) {
+        const committed = await commitCycle(db, result.commit);
         res.status(committed.status).json(committed.body);
         return;
       }

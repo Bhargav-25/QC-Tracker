@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { FINAL_PACKING_ITEMS, INSTALLATION_PHOTO_COUNT, STATUS, STATUS_ORDER, emptyDispatch, emptyInstallation } from "../constants.js";
+import { FINAL_PACKING_ITEMS, INSTALLATION_PHOTO_COUNT, STATUS, STATUS_ORDER, emptyDelivery, emptyDispatch, emptyInstallation } from "../constants.js";
 import { keysMatch, presentedApiKey } from "./apiKey.js";
 import { batchFromMachineNumber, toIsoTimestamp } from "./machinesHttp.js";
 import {
@@ -9,11 +9,13 @@ import {
   isSafeGroupId,
   normalizeGroupNumber,
 } from "./orderModel.js";
+import { currentCycleNumber, planRefurbComplete, planReturn } from "./machineCycle.js";
 import { computeStatus } from "../utils/status.js";
 
 // Ops write API. Kept out of machinesHttp.js and ordersHttp.js so the
 // read-only inventory API and the returns/refurb work can change on their
-// own. This module never writes; functions/opsApi.js applies `write` / `upload`.
+// own. This module never writes; functions/opsApi.js applies `write` / `upload` /
+// `assign` / `commit`.
 
 export const OPS_ACTOR = "ops-api";
 // Name shown in the Audit Log user column. The machine's updatedBy stays ops-api.
@@ -135,7 +137,7 @@ function decodeSegment(segment) {
   }
 }
 
-// `action` is lookup | machines | assign | dispatch | install | photos.
+// `action` is lookup | machines | assign | dispatch | install | photos | return | refurbish.
 export function matchOpsRoute(urlPath) {
   const path = normalizeOpsPath(urlPath);
   const parts = path.split("/").filter(Boolean);
@@ -152,6 +154,12 @@ export function matchOpsRoute(urlPath) {
     if (parts.length === 3 && parts[2] === "assign") {
       return { action: "assign", address: { type: "group", groupNumber } };
     }
+    if (parts.length === 3 && parts[2] === "return") {
+      return { action: "return", address: { type: "group", groupNumber } };
+    }
+    if (parts.length === 3 && parts[2] === "refurbish") {
+      return { action: "refurbish", address: { type: "group", groupNumber } };
+    }
     if (parts.length === 4 && parts[2] === "installation" && parts[3] === "photos") {
       return { action: "photos", address: { type: "group", groupNumber } };
     }
@@ -160,6 +168,12 @@ export function matchOpsRoute(urlPath) {
     const machineNumber = norm(decodeSegment(parts[1]));
     if (parts.length === 3 && parts[2] === "dispatch") {
       return { action: "dispatch", address: { type: "machine", machineNumber } };
+    }
+    if (parts.length === 3 && parts[2] === "return") {
+      return { action: "return", address: { type: "machine", machineNumber } };
+    }
+    if (parts.length === 3 && parts[2] === "refurbish") {
+      return { action: "refurbish", address: { type: "machine", machineNumber } };
     }
     if (parts.length === 3 && parts[2] === "installation") {
       return { action: "install", address: { type: "machine", machineNumber } };
@@ -1118,6 +1132,384 @@ export function planAssign({ groupNumber, body, machines, orders }) {
   };
 }
 
+const RETURN_KEYS = new Set(["date", "reason", "receivedAt", "notes", "fromGroupNo"]);
+const REFURBISH_KEYS = new Set(["date"]);
+const RETURNABLE = new Set([STATUS.DISPATCHED, STATUS.DELIVERED, STATUS.INSTALLED]);
+
+function cloneJson(value) {
+  if (value == null) return null;
+  return JSON.parse(JSON.stringify(value));
+}
+
+function publicOpsDispatchRecord(dispatch) {
+  const source = dispatch || {};
+  return {
+    dispatched: Boolean(source.dispatched),
+    date: norm(source.date),
+    courier: norm(source.courier),
+    trackingNumber: norm(source.trackingNumber),
+    trackingLink: norm(source.trackingLink),
+    includeStand: Boolean(source.includeStand),
+  };
+}
+
+export function publicOpsDispatchHistory(machine) {
+  return (Array.isArray(machine?.dispatchHistory) ? machine.dispatchHistory : []).map((entry) => ({
+    cycle: Number(entry?.cycle) || null,
+    groupNumber: norm(entry?.groupNumber) || null,
+    returnDate: norm(entry?.returnDate),
+    reason: norm(entry?.reason),
+    recordedAt: norm(entry?.recordedAt),
+    dispatch: publicOpsDispatchRecord(entry?.dispatch),
+  }));
+}
+
+function withCommit(result, kind, machine, body, now) {
+  if (!result?.write) return result;
+  return {
+    ...result,
+    commit: {
+      kind,
+      machineNumber: norm(machine.machineNumber),
+      body,
+      now: now.toISOString(),
+    },
+  };
+}
+
+function returnSummary(intake) {
+  return {
+    date: norm(intake?.date),
+    reason: norm(intake?.reason),
+    receivedAt: norm(intake?.receivedAt),
+    fromGroupNo: norm(intake?.fromGroupNo),
+    notes: norm(intake?.notes),
+  };
+}
+
+function refurbSummary(refurb) {
+  return {
+    completedAt: norm(refurb?.completedAt),
+    packed: refurb?.packed === true,
+  };
+}
+
+function parseRequiredDate(value) {
+  if (typeof value !== "string") return { error: "date must be YYYY-MM-DD." };
+  const parsed = parseIsoDate(norm(value));
+  if (!parsed) return { error: "date must be YYYY-MM-DD." };
+  return { value: parsed };
+}
+
+function openReturnMatches(machine, input, provided) {
+  const intake = machine?.intake;
+  if (!intake || intake.refurb?.completedAt) return false;
+  if (norm(intake.date) !== input.date) return false;
+  if (norm(intake.reason) !== input.reason) return false;
+  if (provided.receivedAt && norm(intake.receivedAt) !== input.receivedAt) return false;
+  if (provided.notes && norm(intake.notes) !== input.notes) return false;
+  if (provided.fromGroupNo && norm(intake.fromGroupNo) !== input.fromGroupNo) return false;
+  return true;
+}
+
+function returnAudit(machine, order, beforeStatus, afterStatus, input) {
+  const group = linkedGroup(machine, order);
+  const machineNumber = norm(machine.machineNumber);
+  const prior = machine.dispatch || {};
+  const action = [
+    `recorded return ${machineNumber} group ${shown(group)}:`,
+    `status ${shown(beforeStatus)} → ${shown(afterStatus)}`,
+    `date — → ${shown(input.date)}`,
+    `reason — → ${shown(input.reason)}`,
+    `previous dispatch ${shown(prior.courier)} ${shown(prior.trackingNumber)} on ${shown(prior.date)} kept in history`,
+  ].join(" ");
+  return opsAuditEntry({
+    machineId: machine.id,
+    machineNumber,
+    groupNumber: group || null,
+    section: "return",
+    action,
+  });
+}
+
+function refurbishAudit(machine, order, beforeStatus, afterStatus, date) {
+  const group = linkedGroup(machine, order);
+  const machineNumber = norm(machine.machineNumber);
+  const action = [
+    `marked refurbished ${machineNumber} group ${shown(group)}:`,
+    `status ${shown(beforeStatus)} → ${shown(afterStatus)}`,
+    `date — → ${shown(date)}`,
+  ].join(" ");
+  return opsAuditEntry({
+    machineId: machine.id,
+    machineNumber,
+    groupNumber: group || null,
+    section: "refurb",
+    action,
+  });
+}
+
+function shipmentStillActive(machine) {
+  return Boolean(machine?.dispatch?.dispatched || machine?.delivery?.delivered || machine?.installation?.installed);
+}
+
+function latestCompletePacking(machine) {
+  const cycles = Array.isArray(machine?.cycles) ? machine.cycles : [];
+  for (let i = cycles.length - 1; i >= 0; i -= 1) {
+    if (packingComplete({ finalPacking: cycles[i]?.finalPacking })) return cycles[i].finalPacking;
+  }
+  return null;
+}
+
+function anyPackingPhoto(machine) {
+  const fp = machine?.finalPacking || {};
+  return FINAL_PACKING_ITEMS.some((item) => Boolean(fp[item.key]?.url));
+}
+
+// Archives the current cycle and appends the active dispatch to
+// `dispatchHistory` before clearing it. Same cycle record the Return tab writes.
+export function planOpsReturn(machine, body, now, order) {
+  const payload = body && typeof body === "object" && !Array.isArray(body) ? body : null;
+  if (!payload) return reject(400, "Send a JSON object.");
+  const extra = unknownFields(payload, RETURN_KEYS);
+  if (extra.length) return reject(400, "Return accepts date, reason, receivedAt, notes, and fromGroupNo.");
+  if (!hasOwn(payload, "date") || !norm(payload.date)) return reject(400, "date is required.");
+  const date = parseRequiredDate(payload.date);
+  if (date.error) return reject(400, date.error);
+  const reason = plainText(payload.reason, "reason", 500);
+  if (reason.error) return reject(400, reason.error);
+
+  const provided = {
+    receivedAt: hasOwn(payload, "receivedAt") && norm(payload.receivedAt) !== "",
+    notes: hasOwn(payload, "notes"),
+    fromGroupNo: hasOwn(payload, "fromGroupNo"),
+  };
+  let receivedAt = date.value;
+  if (provided.receivedAt) {
+    const parsed = parseRequiredDate(payload.receivedAt);
+    if (parsed.error) return reject(400, "receivedAt must be YYYY-MM-DD.");
+    receivedAt = parsed.value;
+  }
+  let notes = "";
+  if (provided.notes) {
+    const parsed = optionalPlain(payload.notes, "notes", 2000, { newlines: true });
+    if (parsed.error) return reject(400, parsed.error);
+    notes = parsed.value;
+  }
+  let fromGroupNo = norm(machine.groupNumber);
+  if (provided.fromGroupNo) {
+    const parsed = optionalPlain(payload.fromGroupNo, "fromGroupNo", 80);
+    if (parsed.error) return reject(400, parsed.error);
+    fromGroupNo = parsed.value;
+  }
+  const input = { date: date.value, reason: reason.value, receivedAt, notes, fromGroupNo };
+  const identity = publicIdentity(machine, order);
+
+  if (openReturnMatches(machine, input, provided)) {
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        unchanged: true,
+        ...identity,
+        cycle: currentCycleNumber(machine),
+        refurbished: machineIsRefurbished(machine),
+        updatedBy: OPS_ACTOR,
+        return: returnSummary(machine.intake),
+        dispatchHistory: publicOpsDispatchHistory(machine),
+      },
+    };
+  }
+  if (machine.intake && !machine.intake.refurb?.completedAt) {
+    return reject(409, "This machine already has an open return. Finish refurbishment before recording another.");
+  }
+  if (!RETURNABLE.has(identity.status)) {
+    return reject(
+      409,
+      `Machine ${identity.machineNumber} is ${identity.status}. Only a dispatched, delivered, or installed machine can be returned.`
+    );
+  }
+
+  let plan;
+  try {
+    plan = planReturn(machine, input, { user: OPS_ACTOR, now: now.toISOString(), photos: [] });
+  } catch (err) {
+    return reject(400, err instanceof Error ? err.message : "Return could not be recorded.");
+  }
+
+  const orderClear =
+    plan.unlinkGroup && isSafeGroupId(plan.unlinkGroup)
+      ? {
+          id: groupNumberToId(plan.unlinkGroup),
+          fields: {
+            machineId: "",
+            machineNumber: "",
+            fulfillmentStatus: "",
+            updatedAt: SERVER_TIMESTAMP,
+            updatedBy: OPS_ACTOR,
+          },
+        }
+      : null;
+  const write = {
+    machineId: machine.id,
+    machineNumber: identity.machineNumber,
+    groupNumber: identity.groupNumber || "",
+    fields: { ...plan.reset, updatedBy: OPS_ACTOR },
+    sectionStamps: ["return"],
+    orderClear,
+  };
+  const projected = applyOpsWrite(machine, write, now.toISOString());
+  const status = computeStatus(projected);
+  write.audit = returnAudit(machine, order, identity.status, status, input);
+  return withCommit(
+    {
+      status: 200,
+      body: {
+        ok: true,
+        unchanged: false,
+        machineNumber: identity.machineNumber,
+        machineId: identity.machineId,
+        groupNumber: identity.groupNumber,
+        status,
+        cycle: plan.nextCycle,
+        refurbished: machineIsRefurbished(projected),
+        updatedBy: OPS_ACTOR,
+        return: returnSummary(projected.intake),
+        dispatchHistory: publicOpsDispatchHistory(projected),
+      },
+      write,
+    },
+    "return",
+    machine,
+    payload,
+    now
+  );
+}
+
+// Marks the open return refurbished and moves the machine to Packed.
+// A dispatch that is still on the active record is appended to dispatchHistory
+// before it is cleared. Packing photos from the archived cycle are restored
+// when the active record has none; `intake.refurb.packed` makes status Packed
+// even when those photos were never stored.
+export function planOpsRefurbish(machine, body, now, order) {
+  const payload = body && typeof body === "object" && !Array.isArray(body) ? body : null;
+  if (!payload) return reject(400, "Send a JSON object.");
+  const extra = unknownFields(payload, REFURBISH_KEYS);
+  if (extra.length) return reject(400, "Refurbish accepts date.");
+  let date = todayIst(now);
+  if (hasOwn(payload, "date") && norm(payload.date)) {
+    const parsed = parseRequiredDate(payload.date);
+    if (parsed.error) return reject(400, parsed.error);
+    date = parsed.value;
+  } else if (hasOwn(payload, "date") && payload.date != null && typeof payload.date !== "string") {
+    return reject(400, "date must be YYYY-MM-DD.");
+  }
+
+  const identity = publicIdentity(machine, order);
+  if (!machine?.intake) {
+    return reject(409, `Machine ${identity.machineNumber} has no return. Record a return before refurbishing it.`);
+  }
+  if (machine.intake.refurb?.completedAt && identity.status === STATUS.PACKED) {
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        unchanged: true,
+        ...identity,
+        cycle: currentCycleNumber(machine),
+        refurbished: machineIsRefurbished(machine),
+        updatedBy: OPS_ACTOR,
+        refurb: refurbSummary(machine.intake.refurb),
+        dispatchHistory: publicOpsDispatchHistory(machine),
+      },
+    };
+  }
+  if (machine.intake.refurb?.completedAt && RETURNABLE.has(identity.status)) {
+    return reject(
+      409,
+      `Machine ${identity.machineNumber} is ${identity.status}. Return it before refurbishing again.`
+    );
+  }
+
+  let intake = machine.intake;
+  if (!intake.refurb?.completedAt) {
+    try {
+      intake = planRefurbComplete(machine, { date, user: OPS_ACTOR, now: now.toISOString() }).intake;
+    } catch (err) {
+      return reject(409, err instanceof Error ? err.message : "Refurbishment could not be completed.");
+    }
+  }
+  intake = {
+    ...intake,
+    refurb: {
+      ...(intake.refurb || {}),
+      lines: Array.isArray(intake.refurb?.lines) ? intake.refurb.lines : [],
+      completedAt: intake.refurb?.completedAt || date,
+      completedBy: intake.refurb?.completedBy || OPS_ACTOR,
+      packed: true,
+    },
+  };
+
+  const fields = { intake, updatedBy: OPS_ACTOR };
+  if (shipmentStillActive(machine)) {
+    const prior = Array.isArray(machine.dispatchHistory)
+      ? machine.dispatchHistory.map((entry) => cloneJson(entry)).filter(Boolean)
+      : [];
+    fields.dispatchHistory = [
+      ...prior,
+      {
+        cycle: currentCycleNumber(machine),
+        groupNumber: norm(machine.groupNumber),
+        returnDate: norm(machine.intake?.date) || date,
+        reason: norm(machine.intake?.reason),
+        recordedAt: now.toISOString(),
+        dispatch: cloneJson(machine.dispatch) || emptyDispatch(),
+      },
+    ];
+    fields.dispatch = emptyDispatch();
+    fields.delivery = emptyDelivery();
+    fields.installation = emptyInstallation();
+  }
+  if (!packingComplete(machine) && !anyPackingPhoto(machine)) {
+    const archived = latestCompletePacking(machine);
+    if (archived) fields.finalPacking = cloneJson(archived);
+  }
+
+  const write = {
+    machineId: machine.id,
+    machineNumber: identity.machineNumber,
+    groupNumber: identity.groupNumber || "",
+    fields,
+    sectionStamps: ["refurb"],
+  };
+  const projected = applyOpsWrite(machine, write, now.toISOString());
+  const status = computeStatus(projected);
+  write.audit = refurbishAudit(machine, order, identity.status, status, date);
+  return withCommit(
+    {
+      status: 200,
+      body: {
+        ok: true,
+        unchanged: false,
+        machineNumber: identity.machineNumber,
+        machineId: identity.machineId,
+        groupNumber: identity.groupNumber,
+        status,
+        cycle: currentCycleNumber(projected),
+        refurbished: machineIsRefurbished(projected),
+        updatedBy: OPS_ACTOR,
+        refurb: refurbSummary(projected.intake?.refurb),
+        dispatchHistory: publicOpsDispatchHistory(projected),
+      },
+      write,
+    },
+    "refurbish",
+    machine,
+    payload,
+    now
+  );
+}
+
 // Pure handler. `expectedKey` is OPS_WRITE_API_KEY only — callers must not
 // pass the orders key or the machines read key. Comparison is keysMatch.
 export function handleOpsHttp({
@@ -1182,6 +1574,8 @@ export function handleOpsHttp({
 
   if (route.action === "dispatch") return planDispatch(machine, body, clock, linkedOrder);
   if (route.action === "install") return planInstall(machine, body, clock, linkedOrder, route.address);
+  if (route.action === "return") return planOpsReturn(machine, body, clock, linkedOrder);
+  if (route.action === "refurbish") return planOpsRefurbish(machine, body, clock, linkedOrder);
   return planPhoto(
     machine,
     body,

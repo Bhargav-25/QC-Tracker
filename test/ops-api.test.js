@@ -136,6 +136,22 @@ describe("ops function source", () => {
     assert.ok(assignTx > 0 && replan > assignTx && machineUpdate > replan);
     assert.ok(orderSet > machineUpdate && orderUpdate > orderSet && auditSet > orderUpdate);
   });
+
+  it("commits return and refurbish in one transaction with the ops-bot audit row", () => {
+    const cycle = ops.slice(ops.indexOf("async function commitCycle"), ops.indexOf("export const opsApi"));
+    const txAt = cycle.indexOf("await db.runTransaction");
+    const readAt = cycle.indexOf('tx.get(db.collection("machines").where("machineNumber"');
+    const planAt = cycle.indexOf("planOpsReturn(");
+    const refurbAt = cycle.indexOf("planOpsRefurbish(");
+    const updateAt = cycle.indexOf("tx.update(");
+    const orderAt = cycle.indexOf('tx.update(db.collection("orders")');
+    const auditAt = cycle.indexOf("tx.set(auditRef, auditWrite(planned.write.audit))");
+    assert.ok(txAt > 0 && readAt > txAt && refurbAt > readAt && planAt > refurbAt);
+    assert.ok(updateAt > planAt && orderAt > updateAt && auditAt > orderAt);
+    const handler = ops.slice(ops.indexOf("if (result.commit)"), ops.indexOf("if (result.upload)"));
+    assert.match(handler, /await commitCycle\(db, result\.commit\)/);
+    assert.match(handler, /return;/);
+  });
 });
 
 describe("ops api auth", () => {
@@ -685,7 +701,8 @@ describe("ops api machine list and assignment", () => {
     assert.equal(comma.body.machines[0].machineNumber, "X35M002");
     assert.equal(comma.body.machines[0].packedAt, "2026-08-01T00:00:00.000Z");
 
-    assert.equal(call({ method: "GET", urlPath: "/v1/machines", query: { status: "Returned" }, machines }).status, 400);
+    assert.equal(call({ method: "GET", urlPath: "/v1/machines", query: { status: "Returned" }, machines }).status, 200);
+    assert.equal(call({ method: "GET", urlPath: "/v1/machines", query: { status: "NotAStatus" }, machines }).status, 400);
     assert.equal(call({ method: "GET", urlPath: "/v1/machines", query: { limit: "0" }, machines }).status, 400);
     const denied = call({ method: "GET", urlPath: "/v1/machines", headers: headers(ORDERS_KEY), machines });
     assert.equal(denied.status, 401);
@@ -849,5 +866,250 @@ describe("ops api machine list and assignment", () => {
       }).status,
       400
     );
+  });
+});
+
+describe("ops return and refurbish", () => {
+  const order = {
+    id: "G1435",
+    groupNumber: "G1435",
+    machineId: "m1",
+    machineNumber: "X34M005",
+    fulfillmentStatus: "Dispatched",
+  };
+
+  function shipped(overrides = {}) {
+    return packed({
+      finalPacking: {
+        machineBolted: null,
+        fastnersBox: null,
+        frontCover: null,
+        finalPacked: null,
+      },
+      dispatch: {
+        dispatched: true,
+        date: "2026-10-20",
+        comment: "keep-me",
+        includeStand: true,
+        courier: "DP World",
+        trackingNumber: "DP9981",
+        trackingLink: "https://track.example/DP9981",
+        accessoriesSeparate: false,
+        accessoriesCourier: "",
+        accessoriesTracking: "",
+        accessoriesSentOn: "",
+        accessoriesStatus: "Not sent",
+      },
+      delivery: { delivered: false, date: "" },
+      installation: { installed: false, date: "", photos: [], video: null, installedBy: "" },
+      ...overrides,
+    });
+  }
+
+  function returnedMachine() {
+    const machine = shipped();
+    const result = call({
+      urlPath: "/v1/machines/X34M005/return",
+      body: { date: "2026-10-27", reason: "Customer rejected the installation" },
+      machines: [machine],
+      order,
+    });
+    assert.equal(result.status, 200);
+    return { machine, result, saved: applyOpsWrite(machine, result.write, NOW.toISOString()) };
+  }
+
+  it("returns a dispatched machine and keeps the previous dispatch in history", () => {
+    const { result } = returnedMachine();
+    assert.equal(result.body.ok, true);
+    assert.equal(result.body.unchanged, false);
+    assert.equal(result.body.status, STATUS.RETURNED);
+    assert.equal(result.body.cycle, 2);
+    assert.equal(result.body.return.date, "2026-10-27");
+    assert.equal(result.body.return.reason, "Customer rejected the installation");
+    assert.equal(result.body.return.receivedAt, "2026-10-27");
+    assert.equal(result.body.return.fromGroupNo, "G1435");
+    assert.equal(result.body.dispatchHistory.length, 1);
+    assert.equal(result.body.dispatchHistory[0].cycle, 1);
+    assert.equal(result.body.dispatchHistory[0].groupNumber, "G1435");
+    assert.equal(result.body.dispatchHistory[0].dispatch.dispatched, true);
+    assert.equal(result.body.dispatchHistory[0].dispatch.courier, "DP World");
+    assert.equal(result.body.dispatchHistory[0].dispatch.trackingNumber, "DP9981");
+    assert.equal(result.body.dispatchHistory[0].dispatch.trackingLink, "https://track.example/DP9981");
+    assert.equal(result.body.dispatchHistory[0].dispatch.date, "2026-10-20");
+    assert.equal(result.write.fields.dispatch.dispatched, false);
+    assert.equal(result.write.fields.dispatch.comment, "");
+    assert.equal(result.write.fields.dispatchHistory[0].dispatch.comment, "keep-me");
+    assert.equal(result.write.fields.dispatchHistory[0].dispatch.includeStand, true);
+    assert.equal(result.write.fields.cycles[0].dispatch.trackingNumber, "DP9981");
+    assert.equal(result.write.fields.groupNumber, "");
+    assert.equal(result.write.audit.userEmail, OPS_AUDIT_ACTOR);
+    assert.equal(result.write.audit.section, "return");
+    assert.match(result.write.audit.action, /status Dispatched → Returned/);
+    assert.match(result.write.audit.action, /DP9981/);
+    assert.match(result.write.audit.action, /kept in history/);
+    assert.equal(result.write.orderClear.id, "G1435");
+    assert.equal(result.write.orderClear.fields.machineId, "");
+    assert.equal(result.write.orderClear.fields.machineNumber, "");
+    assert.equal(result.write.orderClear.fields.fulfillmentStatus, "");
+    assert.equal(result.write.orderClear.fields.updatedBy, OPS_ACTOR);
+    assert.equal(result.commit.kind, "return");
+    assert.equal(result.commit.machineNumber, "X34M005");
+    assert.equal(JSON.stringify(result.body).includes(SECRET), false);
+
+    const saved = applyOpsWrite(shipped(), result.write, NOW.toISOString());
+    assert.equal(computeStatus(saved), STATUS.RETURNED);
+    assert.equal(toPublicMachine(saved).dispatch.dispatched, false);
+    assert.equal(toPublicMachine(saved).dispatchHistory[0].dispatch.trackingNumber, "DP9981");
+    assert.equal(toPublicMachine(saved).cycles[0].dispatch.courier, "DP World");
+    assert.equal(JSON.stringify(toPublicMachine(saved)).includes(SECRET), false);
+
+    const again = call({
+      urlPath: "/v1/machines/X34M005/return",
+      body: { date: "2026-10-27", reason: "Customer rejected the installation" },
+      machines: [saved],
+    });
+    assert.equal(again.status, 200);
+    assert.equal(again.body.unchanged, true);
+    assert.equal(again.write, undefined);
+    assert.equal(again.commit, undefined);
+
+    const different = call({
+      urlPath: "/v1/machines/X34M005/return",
+      body: { date: "2026-10-27", reason: "Different reason" },
+      machines: [saved],
+    });
+    assert.equal(different.status, 409);
+    assert.equal(different.write, undefined);
+  });
+
+  it("refurbishes a returned machine back to Packed without dropping dispatch history", () => {
+    const { saved, result: returned } = returnedMachine();
+    const result = call({
+      urlPath: "/v1/machines/X34M005/refurbish",
+      body: { date: "2026-10-28" },
+      machines: [saved],
+    });
+    assert.equal(result.status, 200);
+    assert.equal(result.body.unchanged, false);
+    assert.equal(result.body.status, STATUS.PACKED);
+    assert.equal(result.body.refurbished, true);
+    assert.equal(result.body.refurb.completedAt, "2026-10-28");
+    assert.equal(result.body.refurb.packed, true);
+    assert.equal(result.body.dispatchHistory[0].dispatch.trackingNumber, "DP9981");
+    assert.equal(result.body.dispatchHistory[0].dispatch.trackingLink, "https://track.example/DP9981");
+    assert.equal(result.write.fields.intake.refurb.packed, true);
+    assert.equal(result.write.fields.dispatch, undefined);
+    assert.equal(result.write.audit.userEmail, OPS_AUDIT_ACTOR);
+    assert.equal(result.write.audit.section, "refurb");
+    assert.match(result.write.audit.action, /status Returned → Packed/);
+    assert.equal(result.commit.kind, "refurbish");
+
+    const packedAgain = applyOpsWrite(saved, result.write, NOW.toISOString());
+    assert.equal(computeStatus(packedAgain), STATUS.PACKED);
+    assert.equal(packedAgain.dispatch.dispatched, false);
+    assert.equal(packedAgain.dispatchHistory[0].dispatch.comment, "keep-me");
+    assert.equal(packedAgain.dispatchHistory[0].dispatch.trackingNumber, returned.body.dispatchHistory[0].dispatch.trackingNumber);
+    assert.equal(toPublicMachine(packedAgain).status, STATUS.PACKED);
+    assert.equal(JSON.stringify(result.body).includes(SECRET), false);
+
+    const retry = call({
+      urlPath: "/v1/machines/X34M005/refurbish",
+      body: { date: "2026-10-28" },
+      machines: [packedAgain],
+    });
+    assert.equal(retry.status, 200);
+    assert.equal(retry.body.unchanged, true);
+    assert.equal(retry.write, undefined);
+    assert.equal(retry.body.status, STATUS.PACKED);
+  });
+
+  it("restores archived packing photos when refurbish moves the machine to Packed", () => {
+    const machine = shipped({ finalPacking: packed().finalPacking });
+    const returned = call({
+      urlPath: "/v1/machines/X34M005/return",
+      body: { date: "2026-10-27", reason: "Coating worn" },
+      machines: [machine],
+      order,
+    });
+    const saved = applyOpsWrite(machine, returned.write, NOW.toISOString());
+    assert.equal(saved.finalPacking.finalPacked, null);
+    const result = call({
+      urlPath: "/v1/machines/X34M005/refurbish",
+      body: {},
+      machines: [saved],
+    });
+    assert.equal(result.status, 200);
+    assert.equal(result.body.status, STATUS.PACKED);
+    assert.equal(result.write.fields.finalPacking.finalPacked.url, SECRET);
+    assert.equal(result.body.dispatchHistory[0].dispatch.trackingNumber, "DP9981");
+    const projected = applyOpsWrite(saved, result.write, NOW.toISOString());
+    assert.equal(computeStatus(projected), STATUS.PACKED);
+    assert.equal(JSON.stringify(toPublicMachine(projected)).includes(SECRET), false);
+  });
+
+  it("rejects a return that is not out for delivery, and refurbish before a return", () => {
+    const tooSoon = call({
+      urlPath: "/v1/machines/X34M005/return",
+      body: { date: "2026-10-27", reason: "Not dispatched" },
+      machines: [packed()],
+    });
+    assert.equal(tooSoon.status, 409);
+    assert.match(tooSoon.body.error, /Packed/);
+    assert.equal(tooSoon.write, undefined);
+    assert.equal(tooSoon.commit, undefined);
+
+    const early = call({
+      urlPath: "/v1/machines/X34M005/refurbish",
+      body: {},
+      machines: [shipped()],
+    });
+    assert.equal(early.status, 409);
+    assert.match(early.body.error, /Record a return/);
+    assert.equal(early.commit, undefined);
+
+    const denied = call({
+      urlPath: "/v1/machines/X34M005/return",
+      headers: headers(READ_KEY),
+      body: { date: "2026-10-27", reason: "Customer rejected the installation" },
+      machines: [shipped()],
+    });
+    assert.equal(denied.status, 401);
+    assert.equal(denied.write, undefined);
+
+    const method = call({
+      method: "GET",
+      urlPath: "/v1/machines/X34M005/return",
+      machines: [shipped()],
+    });
+    assert.equal(method.status, 405);
+    assert.equal(method.allow, "POST");
+
+    assert.equal(
+      call({
+        urlPath: "/v1/machines/X34M005/return",
+        body: { reason: "Missing date" },
+        machines: [shipped()],
+      }).status,
+      400
+    );
+    assert.equal(
+      call({
+        urlPath: "/v1/machines/X34M005/refurbish",
+        body: { notes: "no" },
+        machines: [shipped()],
+      }).status,
+      400
+    );
+
+    const byGroup = call({
+      urlPath: "/v1/groups/G1435/return",
+      body: { date: "2026-10-27", reason: "Customer rejected the installation", notes: "Lobby" },
+      machines: [shipped()],
+      order,
+    });
+    assert.equal(byGroup.status, 200);
+    assert.equal(byGroup.body.status, STATUS.RETURNED);
+    assert.equal(byGroup.body.return.notes, "Lobby");
+    assert.equal(byGroup.write.fields.dispatchHistory[0].dispatch.trackingNumber, "DP9981");
   });
 });

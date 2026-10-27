@@ -1,11 +1,23 @@
 import { STATUS, DEFAULT_WARRANTY_YEARS, WARRANTY_EXPIRY_WARNING_DAYS } from "../constants.js";
 
+export { cycleCount, isRefurbished } from "../domain/machineCycle.js";
+
 // Derives the current lifecycle status of a machine from its data.
-// This is computed, not stored, so it can never drift out of sync —
-// except for the manual lifecycle actions (Dispatched / Delivered /
-// Installed), which are deliberate one-way steps rather than computed state.
+// This is the one status function the screens and machinesApi both use.
+// Returned / Refurbishing describe the open return on the current cycle.
+// Once refurbishment is marked complete, the new cycle uses the same
+// Testing > Packed > Dispatched > Delivered > Installed precedence.
+// The ops refurbish endpoint also sets intake.refurb.packed, which counts
+// as Packed without waiting for new final-packing photos.
 export function computeStatus(machine) {
   if (!machine) return STATUS.ASSEMBLY;
+
+  const intake = machine.intake;
+  if (intake && !intake.refurb?.completedAt) {
+    const lines = Array.isArray(intake.refurb?.lines) ? intake.refurb.lines : [];
+    const started = Boolean(intake.refurb?.startedAt) || lines.some((line) => line && !line.undone);
+    return started ? STATUS.REFURBISHING : STATUS.RETURNED;
+  }
 
   if (machine.installation?.installed) return STATUS.INSTALLED;
   if (machine.delivery?.delivered) return STATUS.DELIVERED;
@@ -14,7 +26,9 @@ export function computeStatus(machine) {
   const fp = machine.finalPacking || {};
   const finalPackingDone =
     fp.machineBolted?.url && fp.fastnersBox?.url && fp.frontCover?.url && fp.finalPacked?.url;
-  if (finalPackingDone) return STATUS.PACKED;
+  // Workshop refurb complete leaves `packed` unset, so that machine stays on
+  // the QC path. Ops refurbish sets it and the machine is Packed immediately.
+  if (finalPackingDone || intake?.refurb?.packed === true) return STATUS.PACKED;
 
   const resistanceStarted = (machine.resistance || []).some(
     (row) => row.eccentric !== "" || row.concentric !== ""
