@@ -99,6 +99,9 @@ Each machine is one document in the `machines` Firestore collection:
   sent separately (clears the notification)
 - `finalPacking` — 4 booleans for the physical packing steps
 - `dispatch` — `{ dispatched, date, comment }`
+- `corrections` — present only after an ops `reset`: one entry per reset
+  with the reason, previous status and group, and the cleared dispatch,
+  delivery, and installation (including photo URLs and storage paths)
 
 **Status** shown on the dashboard is computed automatically from this data,
 not stored separately, so it can't drift out of sync:
@@ -393,6 +396,7 @@ a group number (`G338%2F9`).
 | POST | `/v1/groups/<groupNumber>/return` | Same, by group number. |
 | POST | `/v1/machines/<machineNumber>/refurbish` | Mark refurbished and move the machine to Packed. |
 | POST | `/v1/groups/<groupNumber>/refurbish` | Same, by group number, while the group is still linked. |
+| POST | `/v1/machines/<machineNumber>/reset` | Undo a wrong link: clear dispatch, delivery, and installation, unlink the order, back to Packed. |
 
 Every other method is `405`. There is no delete. Assembly, QC, packing, and
 delivery are not edited in place. Return archives the current cycle,
@@ -660,6 +664,67 @@ rules change: the function uses the Admin SDK.
 ```
 firebase deploy --only functions:opsApi
 ```
+
+Reset undoes a wrong machine link, including one that was already
+dispatched and installed. It is not a return: it does not open a return,
+archive a cycle, or touch `cycles`, `dispatchHistory`, or `intake`. In one
+transaction it clears the active `dispatch` (the comment is kept),
+`delivery`, and `installation`, clears `machine.groupNumber`, clears
+`machineId`, `machineNumber`, and `fulfillmentStatus` on every order that
+points at this machine, and writes one `ops-bot` audit row (section
+`reset`). Nothing is deleted. The cleared records are appended to
+`machine.corrections` with the reason and the previous status and group,
+and the installation photo files stay in Storage. The response lists their
+`url`, `path`, and `contentHash` so they can be re-uploaded to the right
+machine. Addressed by machine number only. `reason` is required.
+`groupNumber` is optional and, when sent, must match the machine's current
+link or the call is `409`. Also `409`: an open return, a dispatch that
+included a machine stand (fix that on the Dispatch tab so the stand count
+stays right), warranty extensions, duplicate machine numbers, or final
+packing that is not complete (the machine would not be Packed). A Packed
+machine with no link and nothing to clear returns `"unchanged": true`.
+
+```
+POST /v1/machines/X34M42/reset
+X-API-Key: $OPS_WRITE_API_KEY
+Content-Type: application/json
+
+{ "reason": "Wrong machine linked to G1492; should be X34M41", "groupNumber": "G1492" }
+```
+
+```
+200
+{
+  "ok": true,
+  "unchanged": false,
+  "machineNumber": "X34M42",
+  "machineId": "m42",
+  "groupNumber": null,
+  "previousGroupNumber": "G1492",
+  "status": "Packed",
+  "previousStatus": "Installed",
+  "updatedBy": "ops-api",
+  "unlinkedOrders": ["G1492"],
+  "cleared": {
+    "dispatch": { "dispatched": true, "date": "2026-11-13", "courier": "Local – Bangalore", "trackingNumber": "...", "trackingLink": "" },
+    "delivery": { "delivered": false, "date": "" },
+    "installation": {
+      "installed": true, "date": "2026-11-13", "installedBy": "Syed Mateen", "notes": "",
+      "photos": [{ "url": "...", "path": "machines/m42/installation/...", "contentHash": "...", "capturedAt": "..." }],
+      "video": null
+    }
+  }
+}
+```
+
+To move a shipment from the wrong machine to the right one, reset the wrong
+machine, then replay the shipment on the right one with the existing calls:
+`POST /v1/groups/<group>/assign` with the right machine, `dispatch`, and
+`installation` with the same values, then download each photo from
+`cleared.installation.photos[].url` and send it to
+`/installation/photos` (the bytes are the same, so `contentHash` matches
+the original audit rows). Finally assign the reset machine to its real
+group if it has one.
 
 Lookup:
 

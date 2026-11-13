@@ -17,6 +17,7 @@ import {
   placeInstallationPhoto,
   planAssign,
   planOpsRefurbish,
+  planOpsReset,
   planOpsReturn,
   selectOpsMachine,
 } from "../src/domain/opsHttp.js";
@@ -318,6 +319,63 @@ async function commitCycle(db, commit) {
   return outcome;
 }
 
+// Every order that could point at the machine: by machineId, by
+// machineNumber, and the order for the machine's own groupNumber. `read` is
+// tx.get inside the transaction and a plain get outside it.
+async function readResetContext(db, read, machineNumber) {
+  const machineQuery = await read(db.collection("machines").where("machineNumber", "==", machineNumber));
+  const machines = machineQuery.docs.map(docData);
+  const orders = [];
+  const byNumber = await read(db.collection("orders").where("machineNumber", "==", machineNumber));
+  byNumber.docs.forEach((snap) => orders.push(docData(snap)));
+  for (const machine of machines) {
+    const byId = await read(db.collection("orders").where("machineId", "==", machine.id));
+    byId.docs.forEach((snap) => orders.push(docData(snap)));
+    const group = normalizeGroupNumber(machine.groupNumber);
+    if (group && isSafeGroupId(group)) {
+      const snap = await read(db.collection("orders").doc(groupNumberToId(group)));
+      if (snap.exists) orders.push(docData(snap));
+    }
+  }
+  return { machines, orders: dedupeDocs(orders) };
+}
+
+// Reset re-reads the machine and every order linked to it inside the
+// transaction, re-plans, then commits the machine reset, the order unlinks,
+// and the ops-bot audit row together.
+async function commitReset(db, commit) {
+  const auditRef = db.collection("auditLog").doc();
+  let outcome = { status: 409, body: { ok: false, error: "Reset could not be saved." } };
+  await db.runTransaction(async (tx) => {
+    const { machines, orders } = await readResetContext(db, (ref) => tx.get(ref), commit.machineNumber);
+    if (machines.length > 1) {
+      outcome = { status: 409, body: { ok: false, error: `More than one machine is numbered ${commit.machineNumber}.` } };
+      return;
+    }
+    if (!machines.length) {
+      outcome = { status: 404, body: { ok: false, error: `No machine ${commit.machineNumber}.` } };
+      return;
+    }
+    const parsedNow = new Date(commit.now);
+    const now = Number.isNaN(parsedNow.getTime()) ? new Date() : parsedNow;
+    const planned = planOpsReset(machines[0], commit.body, now, orders);
+    if (!planned.write) {
+      outcome = { status: planned.status, body: planned.body };
+      return;
+    }
+    tx.update(
+      db.collection("machines").doc(planned.write.machineId),
+      stampUpdate(buildMachineUpdate(planned.write))
+    );
+    for (const clear of planned.write.orderClears) {
+      tx.update(db.collection("orders").doc(clear.id), stampUpdate(clear.fields));
+    }
+    tx.set(auditRef, auditWrite(planned.write.audit));
+    outcome = { status: planned.status, body: planned.body };
+  });
+  return outcome;
+}
+
 export const opsApi = onRequest(
   {
     secrets: [opsWriteApiKey],
@@ -342,6 +400,10 @@ export const opsApi = onRequest(
       let order = null;
       if (route.action === "machines" || route.action === "assign") {
         const loaded = await loadInventory(db);
+        machines = loaded.machines;
+        orders = loaded.orders;
+      } else if (route.action === "reset") {
+        const loaded = await readResetContext(db, (ref) => ref.get(), route.address.machineNumber);
         machines = loaded.machines;
         orders = loaded.orders;
       } else if (route.action !== "unknown") {
@@ -370,7 +432,9 @@ export const opsApi = onRequest(
       }
 
       if (result.commit) {
-        const committed = await commitCycle(db, result.commit);
+        const committed = result.commit.kind === "reset"
+          ? await commitReset(db, result.commit)
+          : await commitCycle(db, result.commit);
         res.status(committed.status).json(committed.body);
         return;
       }
