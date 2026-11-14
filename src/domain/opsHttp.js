@@ -137,7 +137,8 @@ function decodeSegment(segment) {
   }
 }
 
-// `action` is lookup | machines | assign | dispatch | install | photos | return | refurbish.
+// `action` is lookup | machines | assign | dispatch | install | photos | return | refurbish | reset.
+// Reset is addressed by machine number only, so the machine being cleared is explicit.
 export function matchOpsRoute(urlPath) {
   const path = normalizeOpsPath(urlPath);
   const parts = path.split("/").filter(Boolean);
@@ -174,6 +175,9 @@ export function matchOpsRoute(urlPath) {
     }
     if (parts.length === 3 && parts[2] === "refurbish") {
       return { action: "refurbish", address: { type: "machine", machineNumber } };
+    }
+    if (parts.length === 3 && parts[2] === "reset") {
+      return { action: "reset", address: { type: "machine", machineNumber } };
     }
     if (parts.length === 3 && parts[2] === "installation") {
       return { action: "install", address: { type: "machine", machineNumber } };
@@ -1510,6 +1514,243 @@ export function planOpsRefurbish(machine, body, now, order) {
   );
 }
 
+const RESET_KEYS = new Set(["reason", "groupNumber"]);
+
+function hasShipmentRecord(machine) {
+  const dispatch = machine?.dispatch || {};
+  const delivery = machine?.delivery || {};
+  const installation = machine?.installation || {};
+  return Boolean(
+    dispatch.dispatched ||
+      norm(dispatch.date) ||
+      norm(dispatch.courier) ||
+      norm(dispatch.trackingNumber) ||
+      norm(dispatch.trackingLink) ||
+      delivery.delivered ||
+      norm(delivery.date) ||
+      installation.installed ||
+      norm(installation.date) ||
+      norm(installation.installedBy) ||
+      norm(installation.notes) ||
+      photoCount(installation.photos) > 0 ||
+      installation.video
+  );
+}
+
+function publicStoredFile(file) {
+  return {
+    url: text(file?.url),
+    path: text(file?.path),
+    contentHash: file?.contentHash || null,
+    capturedAt: text(file?.capturedAt),
+  };
+}
+
+function resetSummary(entry) {
+  const dispatch = entry.dispatch || {};
+  const installation = entry.installation || {};
+  return {
+    dispatch: {
+      dispatched: Boolean(dispatch.dispatched),
+      date: norm(dispatch.date),
+      courier: norm(dispatch.courier),
+      trackingNumber: norm(dispatch.trackingNumber),
+      trackingLink: norm(dispatch.trackingLink),
+    },
+    delivery: {
+      delivered: Boolean(entry.delivery?.delivered),
+      date: norm(entry.delivery?.date),
+    },
+    installation: {
+      installed: Boolean(installation.installed),
+      date: norm(installation.date),
+      installedBy: norm(installation.installedBy),
+      notes: norm(installation.notes),
+      photos: (Array.isArray(installation.photos) ? installation.photos : [])
+        .filter((photo) => photo && typeof photo === "object")
+        .map(publicStoredFile),
+      video: installation.video ? publicStoredFile(installation.video) : null,
+    },
+  };
+}
+
+function resetAudit(machine, group, beforeStatus, afterStatus, reason, summary) {
+  const machineNumber = norm(machine.machineNumber);
+  const { dispatch, installation } = summary;
+  const parts = [
+    `reset ${machineNumber} to Packed group ${shown(group)} → —:`,
+    `status ${shown(beforeStatus)} → ${shown(afterStatus)}`,
+    `reason ${reason}`,
+  ];
+  if (dispatch.dispatched || dispatch.date || dispatch.courier) {
+    parts.push(
+      `cleared dispatch ${shown(dispatch.courier)} ${shown(dispatch.trackingNumber)} on ${shown(dispatch.date)}`
+    );
+  }
+  if (summary.delivery.delivered || summary.delivery.date) {
+    parts.push(`cleared delivery on ${shown(summary.delivery.date)}`);
+  }
+  if (installation.installed || installation.date || installation.installedBy) {
+    parts.push(`cleared installation on ${shown(installation.date)} by ${shown(installation.installedBy)}`);
+  }
+  const files = installation.photos.length + (installation.video ? 1 : 0);
+  if (files) parts.push(`${files} installation file(s) kept in storage and in corrections`);
+  return opsAuditEntry({
+    machineId: machine.id,
+    machineNumber,
+    groupNumber: group || null,
+    section: "reset",
+    action: parts.join(" "),
+  });
+}
+
+// Undo for a wrong machine link. Clears the active dispatch, delivery, and
+// installation, unlinks every order that points at this machine, and puts the
+// machine back to Packed. Nothing is deleted: the cleared records, including
+// the installation photo URLs and storage paths, are appended to
+// `machine.corrections`, and the storage files stay where they are so they can
+// be re-attached to the right machine. This is not a return, so it does not
+// touch `cycles`, `dispatchHistory`, or `intake`.
+export function planOpsReset(machine, body, now, orders) {
+  const payload = body && typeof body === "object" && !Array.isArray(body) ? body : null;
+  if (!payload) return reject(400, "Send a JSON object.");
+  const extra = unknownFields(payload, RESET_KEYS);
+  if (extra.length) return reject(400, "Reset accepts reason and groupNumber.");
+  if (!hasOwn(payload, "reason") || typeof payload.reason !== "string") {
+    return reject(400, "reason is required.");
+  }
+  const reason = plainText(payload.reason, "reason", 500);
+  if (reason.error) return reject(400, reason.error);
+
+  const machineNumber = norm(machine.machineNumber);
+  const linkedOrders = (orders || []).filter((order) => order?.id && orderLinksMachine(order, machine));
+  const group = normalizeGroupNumber(machine.groupNumber) || normalizeGroupNumber(linkedOrders[0]?.groupNumber);
+
+  if (hasOwn(payload, "groupNumber")) {
+    if (typeof payload.groupNumber !== "string") return reject(400, "groupNumber must be a string.");
+    const expected = normalizeGroupNumber(payload.groupNumber);
+    const linkedGroups = new Set(
+      [normalizeGroupNumber(machine.groupNumber), ...linkedOrders.map((order) => normalizeGroupNumber(order.groupNumber))]
+        .filter(Boolean)
+    );
+    if (!linkedGroups.has(expected)) {
+      return reject(409, `Machine ${machineNumber} is linked to ${group || "no group"}, not ${expected || "—"}.`);
+    }
+  }
+
+  if (machine.intake && !machine.intake.refurb?.completedAt) {
+    return reject(409, `Machine ${machineNumber} has an open return. Finish or undo it before a reset.`);
+  }
+  if (machine.dispatch?.includeStand) {
+    return reject(
+      409,
+      `Machine ${machineNumber} was dispatched with a machine stand. Fix the stand on the Dispatch tab first so the stand count stays right.`
+    );
+  }
+  if (Array.isArray(machine.warranty?.extensions) && machine.warranty.extensions.length) {
+    return reject(409, `Machine ${machineNumber} has warranty extensions. An Admin has to move those in the app first.`);
+  }
+
+  const beforeStatus = computeStatus(machine);
+  const hasRecord = hasShipmentRecord(machine);
+  if (!hasRecord && !group && !linkedOrders.length && beforeStatus === STATUS.PACKED) {
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        unchanged: true,
+        machineNumber,
+        machineId: machine.id,
+        groupNumber: null,
+        previousGroupNumber: null,
+        status: beforeStatus,
+        previousStatus: beforeStatus,
+        updatedBy: OPS_ACTOR,
+        unlinkedOrders: [],
+        cleared: null,
+      },
+    };
+  }
+
+  const fields = {
+    groupNumber: "",
+    updatedBy: OPS_ACTOR,
+  };
+  const sectionStamps = [];
+  const entry = {
+    kind: "reset",
+    reason: reason.value,
+    recordedAt: now.toISOString(),
+    recordedBy: OPS_ACTOR,
+    statusBefore: beforeStatus,
+    groupNumber: group || "",
+    orderIds: linkedOrders.map((order) => order.id),
+    dispatch: cloneJson(machine.dispatch) || emptyDispatch(),
+    delivery: cloneJson(machine.delivery) || emptyDelivery(),
+    installation: cloneJson(machine.installation) || emptyInstallation(),
+  };
+  if (hasRecord) {
+    // The comment is a remark on the machine, not part of the shipment.
+    fields.dispatch = { ...emptyDispatch(), comment: text(machine.dispatch?.comment) };
+    fields.delivery = emptyDelivery();
+    fields.installation = emptyInstallation();
+    sectionStamps.push("dispatch", "delivery", "installation");
+  }
+  const prior = Array.isArray(machine.corrections) ? machine.corrections : [];
+  fields.corrections = [...prior, entry];
+
+  const write = {
+    machineId: machine.id,
+    machineNumber,
+    groupNumber: group || "",
+    fields,
+    sectionStamps,
+    orderClears: linkedOrders.map((order) => ({
+      id: order.id,
+      fields: {
+        machineId: "",
+        machineNumber: "",
+        fulfillmentStatus: "",
+        updatedAt: SERVER_TIMESTAMP,
+        updatedBy: OPS_ACTOR,
+      },
+    })),
+  };
+  const projected = applyOpsWrite(machine, write, now.toISOString());
+  const status = computeStatus(projected);
+  if (status !== STATUS.PACKED) {
+    return reject(
+      409,
+      `Machine ${machineNumber} would be ${status} after a reset because final packing is not complete. Finish final packing in the app first.`
+    );
+  }
+  const summary = resetSummary(entry);
+  write.audit = resetAudit(machine, group, beforeStatus, status, reason.value, summary);
+  return withCommit(
+    {
+      status: 200,
+      body: {
+        ok: true,
+        unchanged: false,
+        machineNumber,
+        machineId: machine.id,
+        groupNumber: null,
+        previousGroupNumber: group || null,
+        status,
+        previousStatus: beforeStatus,
+        updatedBy: OPS_ACTOR,
+        unlinkedOrders: linkedOrders.map((order) => normalizeGroupNumber(order.groupNumber) || order.id),
+        cleared: summary,
+      },
+      write,
+    },
+    "reset",
+    machine,
+    payload,
+    now
+  );
+}
+
 // Pure handler. `expectedKey` is OPS_WRITE_API_KEY only — callers must not
 // pass the orders key or the machines read key. Comparison is keysMatch.
 export function handleOpsHttp({
@@ -1557,6 +1798,9 @@ export function handleOpsHttp({
 
   const resolved = resolveAddress(route, machines, order);
   if (resolved.status) return resolved;
+  if (route.action === "reset" && machinesNumbered(machines, route.address.machineNumber).length > 1) {
+    return reject(409, `More than one machine is numbered ${route.address.machineNumber}. Merge the duplicates first.`);
+  }
   const { machine } = resolved;
   const linkedOrder = resolved.order;
   const clock = now instanceof Date && !Number.isNaN(now.getTime()) ? now : new Date();
@@ -1576,6 +1820,7 @@ export function handleOpsHttp({
   if (route.action === "install") return planInstall(machine, body, clock, linkedOrder, route.address);
   if (route.action === "return") return planOpsReturn(machine, body, clock, linkedOrder);
   if (route.action === "refurbish") return planOpsRefurbish(machine, body, clock, linkedOrder);
+  if (route.action === "reset") return planOpsReset(machine, body, clock, orders);
   return planPhoto(
     machine,
     body,
